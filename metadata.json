@@ -1,0 +1,7 @@
+{
+  "name": "SmartPSI",
+  "description": "Plataforma segura para psicólogos gerarem notas clínicas estruturadas a partir de áudio de sessões.",
+  "requestFramePermissions": [
+    "microphone"
+  ]
+}
