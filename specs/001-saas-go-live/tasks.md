@@ -25,10 +25,10 @@ description: "Task list for Smart PSI SaaS public go-live hardening"
 
 **Purpose**: Preparar baseline operacional e de configuracao para o ciclo SaaS.
 
-- [ ] T001 [P] [Shared] Revisar e padronizar variaveis de ambiente em `.env.example` e `.env.production.example` (`ALLOW_DEV_USER_BYPASS`, `CORS_ALLOWED_ORIGINS`, `RATE_LIMIT_WINDOW_MS`, `RATE_LIMIT_MAX`, `FEATURE_GOOGLE_ENABLED`, `FEATURE_ASAAS_ENABLED`)
-- [ ] T002 [Shared] Atualizar documentacao de setup e go-live em `README.md` (envs obrigatorias, deploy VPS, rollback)
-- [ ] T003 [P] [Shared] Validar padrao de health endpoint em `server.ts` e uso de healthcheck em `docker-compose.yml`
-- [ ] T004 [P] [Shared] Garantir que compose e runtime ignoram arquivos sensiveis via `.dockerignore` e `.gitignore`
+- [x] T001 [P] [Shared] Revisar e padronizar variaveis de ambiente em `.env.example` e `.env.production.example` (`ALLOW_DEV_USER_BYPASS`, `CORS_ALLOWED_ORIGINS`, `RATE_LIMIT_WINDOW_MS`, `RATE_LIMIT_MAX`, `FEATURE_GOOGLE_ENABLED`, `FEATURE_ASAAS_ENABLED`)
+- [x] T002 [Shared] Atualizar documentacao de setup e go-live em `README.md` (envs obrigatorias, deploy VPS, rollback)
+- [x] T003 [P] [Shared] Validar padrao de health endpoint em `server.ts` e uso de healthcheck em `docker-compose.yml`
+- [x] T004 [P] [Shared] Garantir que compose e runtime ignoram arquivos sensiveis via `.dockerignore` e `.gitignore`
 
 ---
 
@@ -64,10 +64,10 @@ description: "Task list for Smart PSI SaaS public go-live hardening"
 
 - [x] T013 [US1] Reforcar redacao de dados de pacientes por role em `server.ts` (`GET /api/patients`, `GET /api/patients/:id/history`)
 - [x] T014 [US1] Bloquear alteracao de `notes` clinico por `secretary` em `server.ts` (`PUT /api/patients/:id`)
-- [ ] T015 [P] [US1] Condicionar exibicao clinica no frontend em `src/components/Patients.tsx`
-- [ ] T016 [P] [US1] Condicionar tab/edicao clinica por role em `src/components/PatientProfile.tsx`
-- [ ] T017 [US1] Alinhar menus e acoes por papel em `src/components/Sidebar.tsx`, `src/components/Settings.tsx`, `src/components/Financial.tsx`
-- [ ] T018 [US1] Validar resposta consistente de erro `401/403` no client API em `src/lib/api.ts`
+- [x] T015 [P] [US1] Condicionar exibicao clinica no frontend em `src/components/Patients.tsx`
+- [x] T016 [P] [US1] Condicionar tab/edicao clinica por role em `src/components/PatientProfile.tsx`
+- [x] T017 [US1] Alinhar menus e acoes por papel em `src/components/Sidebar.tsx`, `src/components/Settings.tsx`, `src/components/Financial.tsx`
+- [x] T018 [US1] Validar resposta consistente de erro `401/403` no client API em `src/lib/api.ts`
 
 **Checkpoint**: Privacidade por perfil validada de ponta a ponta.
 
@@ -106,16 +106,16 @@ description: "Task list for Smart PSI SaaS public go-live hardening"
 ### Tests for User Story 3
 
 - [ ] T027 [P] [US3] Validar healthcheck e readiness em ambiente local Docker com `docker compose up -d`
-- [ ] T028 [P] [US3] Validar pipeline de CI (`lint`, `test`, `build`) em `.github/workflows/ci-cd.yml`
+- [x] T028 [P] [US3] Validar pipeline de CI (`lint`, `test`, `build`) em `.github/workflows/ci-cd.yml`
 
 ### Implementation for User Story 3
 
-- [ ] T029 [US3] Finalizar imagem multi-stage em `Dockerfile` para frontend build + runtime Node
-- [ ] T030 [US3] Finalizar stack de deploy em `docker-compose.yml` (app + caddy + restart policy + healthcheck)
-- [ ] T031 [US3] Revisar configuracao TLS/reverse proxy em `ops/Caddyfile`
-- [ ] T032 [US3] Validar script de job mensal autenticado em `ops/run-monthly-billing.sh`
-- [ ] T033 [US3] Garantir capturas de erro em runtime backend em `server.ts` (Sentry opcional por env)
-- [ ] T034 [US3] Garantir captura de erro frontend em `src/main.tsx` (Sentry opcional por env)
+- [x] T029 [US3] Finalizar imagem multi-stage em `Dockerfile` para frontend build + runtime Node
+- [x] T030 [US3] Finalizar stack de deploy em `docker-compose.yml` (app + caddy + restart policy + healthcheck)
+- [x] T031 [US3] Revisar configuracao TLS/reverse proxy em `ops/Caddyfile`
+- [x] T032 [US3] Validar script de job mensal autenticado em `ops/run-monthly-billing.sh`
+- [x] T033 [US3] Garantir capturas de erro em runtime backend em `server.ts` (Sentry opcional por env)
+- [x] T034 [US3] Garantir captura de erro frontend em `src/main.tsx` (Sentry opcional por env)
 
 **Checkpoint**: Operacao SaaS minima pronta para staging/canario.
 
@@ -134,10 +134,10 @@ description: "Task list for Smart PSI SaaS public go-live hardening"
 
 ### Implementation for User Story 4
 
-- [ ] T037 [US4] Consolidar fluxo de recuperacao/redefinicao no frontend em `src/components/Auth.tsx`
-- [ ] T038 [US4] Aplicar utilitarios de data local em `src/lib/date.ts` e substituir usos em `src/components/Agenda.tsx` e `src/components/Financial.tsx`
-- [ ] T039 [US4] Finalizar tipagem explicita em `src/lib/types.ts`, `src/components/Agenda.tsx`, `src/components/Financial.tsx`, `src/components/Settings.tsx`, `src/components/PatientProfile.tsx`
-- [ ] T040 [US4] Ajustar branding/metadados e idioma em `index.html` e `metadata.json`
+- [x] T037 [US4] Consolidar fluxo de recuperacao/redefinicao no frontend em `src/components/Auth.tsx`
+- [x] T038 [US4] Aplicar utilitarios de data local em `src/lib/date.ts` e substituir usos em `src/components/Agenda.tsx` e `src/components/Financial.tsx`
+- [x] T039 [US4] Finalizar tipagem explicita em `src/lib/types.ts`, `src/components/Agenda.tsx`, `src/components/Financial.tsx`, `src/components/Settings.tsx`, `src/components/PatientProfile.tsx`
+- [x] T040 [US4] Ajustar branding/metadados e idioma em `index.html` e `metadata.json`
 
 **Checkpoint**: UX consistente com backend e sem regressao de datas.
 
