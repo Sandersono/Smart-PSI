@@ -105,7 +105,7 @@ description: "Task list for Smart PSI SaaS public go-live hardening"
 
 ### Tests for User Story 3
 
-- [ ] T027 [P] [US3] Validar healthcheck e readiness em ambiente local Docker com `docker compose up -d`
+- [x] T027 [P] [US3] Validar healthcheck e readiness em ambiente local Docker com `docker compose up -d`
 - [x] T028 [P] [US3] Validar pipeline de CI (`lint`, `test`, `build`) em `.github/workflows/ci-cd.yml`
 
 ### Implementation for User Story 3
@@ -206,3 +206,4 @@ description: "Task list for Smart PSI SaaS public go-live hardening"
 - Tarefas [P] devem evitar conflito no mesmo arquivo.
 - Sempre validar backend antes de liberar ajustes de UI por role.
 - Nao publicar sem gate de release completo.
+- Validacao local Docker + smoke HTTPS concluida em 2026-02-22; staging VPS/canario permanecem obrigatorios para T047, T049 e T050.

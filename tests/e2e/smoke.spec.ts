@@ -6,24 +6,28 @@ test.describe("smartpsi smoke", () => {
   test("renders auth screen", async ({ page }) => {
     await page.goto("/");
     await expect(page.getByRole("heading", { name: "SmartPSI" })).toBeVisible();
-    await expect(page.getByRole("button", { name: "Entrar" })).toBeVisible();
+    await expect(page.locator("form").getByRole("button", { name: "Entrar" })).toBeVisible();
   });
 
   test("auth exposes signup, forgot and recovery update screens", async ({ page }) => {
     await page.goto("/");
 
-    await page.getByRole("button", { name: "Criar Conta" }).click();
+    await page.getByRole("button", { name: "Criar Conta" }).first().click();
     await expect(page.getByPlaceholder("Seu nome")).toBeVisible();
-    await expect(page.getByRole("button", { name: "Criar Conta" })).toBeVisible();
+    await expect(
+      page.locator("form").getByRole("button", { name: "Criar Conta" })
+    ).toBeVisible();
 
     await page.getByRole("button", { name: "Entrar" }).first().click();
     await page.getByRole("button", { name: "Esqueci minha senha" }).click();
     await expect(page.getByRole("button", { name: "Enviar link de recuperacao" })).toBeVisible();
     await expect(page.getByRole("button", { name: "Voltar para entrar" })).toBeVisible();
 
-    await page.goto("/#type=recovery");
-    await expect(page.getByText("Defina sua nova senha para continuar.")).toBeVisible();
-    await expect(page.getByRole("button", { name: "Atualizar senha" })).toBeVisible();
+    const recoveryPage = await page.context().newPage();
+    await recoveryPage.goto("/#type=recovery");
+    await expect(recoveryPage.getByText("Defina sua nova senha para continuar.")).toBeVisible();
+    await expect(recoveryPage.getByRole("button", { name: "Atualizar senha" })).toBeVisible();
+    await recoveryPage.close();
   });
 
   test("secretary role hides clinical sidebar items", async ({ page }) => {

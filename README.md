@@ -47,10 +47,11 @@ Aplicacao full-stack (React + Express) para operacao de clinica: pacientes, agen
 2. Clonar repositorio no servidor.
 3. Criar `.env.production` a partir de `.env.production.example`.
 4. Definir dominio no DNS apontando para a VPS.
+5. Garantir que `VITE_SUPABASE_URL` e `VITE_SUPABASE_ANON_KEY` estejam preenchidas (usadas no build do frontend).
 
 ### 2. Subir stack
 
-- `docker compose up -d --build`
+- `docker compose --env-file .env.production up -d --build`
 
 Servicos:
 - `app`: API + frontend
@@ -60,8 +61,8 @@ Servicos:
 
 - Endpoint: `GET /api/health`
 - Rollout sem downtime (imagem nova):
-  - `docker compose pull app`
-  - `docker compose up -d --remove-orphans`
+  - `docker compose --env-file .env.production pull app`
+  - `docker compose --env-file .env.production up -d --remove-orphans`
 
 ## Job mensal (cron)
 
@@ -81,14 +82,17 @@ Workflow: `.github/workflows/ci-cd.yml`
 - CI: `npm ci`, `lint`, `build`, `test`
 - CD (main): build/push imagem no GHCR e deploy por SSH na VPS
 - Deploy usa:
-  - `docker compose pull app`
-  - `docker compose up -d --remove-orphans`
+  - `docker compose --env-file .env.production pull app`
+  - `docker compose --env-file .env.production up -d --remove-orphans`
 
 Configure os secrets no GitHub:
 - `VPS_HOST`
 - `VPS_USER`
 - `VPS_SSH_KEY`
 - `VPS_DEPLOY_PATH`
+- `VITE_SUPABASE_URL`
+- `VITE_SUPABASE_ANON_KEY`
+- `VITE_SENTRY_DSN` (opcional)
 
 ## Observabilidade
 

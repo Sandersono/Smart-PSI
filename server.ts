@@ -1934,7 +1934,7 @@ export async function createApp(options: CreateAppOptions = {}) {
           callback(null, true);
           return;
         }
-        callback(new Error("Origin not allowed by CORS"));
+        callback(null, false);
       },
       credentials: true,
     })
