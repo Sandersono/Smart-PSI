@@ -43,7 +43,7 @@ description: "Task list for Smart PSI SaaS public go-live hardening"
 - [ ] T007 [P] [US1] Implementar logging estruturado com `request_id` por requisicao em `server.ts`
 - [ ] T008 [US1] Fechar webhooks por configuracao/token em `server.ts` (`/api/integrations/google/webhook`, `/api/asaas/webhook`)
 - [ ] T009 [P] [US1] Sanitizar callback OAuth Google em `server.ts` para evitar interpolacao HTML insegura
-- [ ] T010 [US1] Criar/expandir cobertura de teste de fundacao em `tests/backend/security-hardening.test.ts`
+- [x] T010 [US1] Criar/expandir cobertura de teste de fundacao em `tests/backend/security-hardening.test.ts`
 
 **Checkpoint**: Foundation pronta para evolucao por historias.
 
@@ -62,8 +62,8 @@ description: "Task list for Smart PSI SaaS public go-live hardening"
 
 ### Implementation for User Story 1
 
-- [ ] T013 [US1] Reforcar redacao de dados de pacientes por role em `server.ts` (`GET /api/patients`, `GET /api/patients/:id/history`)
-- [ ] T014 [US1] Bloquear alteracao de `notes` clinico por `secretary` em `server.ts` (`PUT /api/patients/:id`)
+- [x] T013 [US1] Reforcar redacao de dados de pacientes por role em `server.ts` (`GET /api/patients`, `GET /api/patients/:id/history`)
+- [x] T014 [US1] Bloquear alteracao de `notes` clinico por `secretary` em `server.ts` (`PUT /api/patients/:id`)
 - [ ] T015 [P] [US1] Condicionar exibicao clinica no frontend em `src/components/Patients.tsx`
 - [ ] T016 [P] [US1] Condicionar tab/edicao clinica por role em `src/components/PatientProfile.tsx`
 - [ ] T017 [US1] Alinhar menus e acoes por papel em `src/components/Sidebar.tsx`, `src/components/Settings.tsx`, `src/components/Financial.tsx`
@@ -81,16 +81,16 @@ description: "Task list for Smart PSI SaaS public go-live hardening"
 
 ### Tests for User Story 2
 
-- [ ] T019 [P] [US2] Cobrir reconciliacao Asaas (`PENDING`, `OVERDUE`, `RECEIVED`, `REFUNDED`) em `tests/backend/security-hardening.test.ts`
+- [x] T019 [P] [US2] Cobrir reconciliacao Asaas (`PENDING`, `OVERDUE`, `RECEIVED`, `REFUNDED`) em `tests/backend/security-hardening.test.ts`
 - [x] T020 [P] [US2] Cobrir cancelamento/exclusao de agendamento com cobranca vinculada em `tests/backend/security-hardening.test.ts`
 
 ### Implementation for User Story 2
 
-- [ ] T021 [US2] Ajustar geracao de cobranca para priorizar `patients.session_fee` em `server.ts`
-- [ ] T022 [US2] Aplicar fallback de valor de sessao somente quando necessario em `server.ts`
-- [ ] T023 [US2] Unificar reconciliacao de webhook Asaas para manter `financial_records` consistente em `server.ts`
-- [ ] T024 [US2] Ajustar fluxo de cancelamento/exclusao de agendamento e cobranca em `server.ts`
-- [ ] T025 [US2] Revisar resumo mensal e agregacoes financeiras em `server.ts`
+- [x] T021 [US2] Ajustar geracao de cobranca para priorizar `patients.session_fee` em `server.ts`
+- [x] T022 [US2] Aplicar fallback de valor de sessao somente quando necessario em `server.ts`
+- [x] T023 [US2] Unificar reconciliacao de webhook Asaas para manter `financial_records` consistente em `server.ts`
+- [x] T024 [US2] Ajustar fluxo de cancelamento/exclusao de agendamento e cobranca em `server.ts`
+- [x] T025 [US2] Revisar resumo mensal e agregacoes financeiras em `server.ts`
 - [ ] T026 [US2] Validar tipos de dados financeiros compartilhados em `src/lib/types.ts` e consumo em `src/components/Financial.tsx`
 
 **Checkpoint**: Financeiro consistente em todos os estados obrigatorios.

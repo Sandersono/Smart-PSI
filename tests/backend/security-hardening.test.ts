@@ -550,50 +550,67 @@ describe("Asaas webhook reconciliation", () => {
     db = created.db;
   });
 
-  it("creates financial record on RECEIVED and updates it on REFUNDED", async () => {
-    const received = await request(app)
-      .post("/api/asaas/webhook")
-      .set("x-asaas-token", "asaas-secret-token")
-      .send({
+  it("reconciles PENDING, OVERDUE, RECEIVED and REFUNDED to financial_records", async () => {
+    const matrix = [
+      {
+        event: "PAYMENT_CREATED",
+        status: "PENDING",
+        expectedFinancialStatus: "pending",
+        paymentDate: undefined,
+        dueDate: "2026-02-20",
+      },
+      {
+        event: "PAYMENT_OVERDUE",
+        status: "OVERDUE",
+        expectedFinancialStatus: "pending",
+        paymentDate: undefined,
+        dueDate: "2026-02-21",
+      },
+      {
         event: "PAYMENT_RECEIVED",
-        payment: {
-          id: "ch_123",
-          status: "RECEIVED",
-          value: 199.9,
-          paymentDate: "2026-02-21",
-        },
-      });
-
-    expect(received.status).toBe(200);
-    expect(db.financial_records.length).toBe(1);
-    expect(db.financial_records[0]).toMatchObject({
-      clinic_id: "clinic-1",
-      patient_id: 21,
-      type: "income",
-      category: "Sessao Asaas",
-      description: "Asaas charge ch_123",
-      status: "paid",
-      amount: 199.9,
-    });
-    expect(db.asaas_charges[0]?.status).toBe("RECEIVED");
-
-    const refunded = await request(app)
-      .post("/api/asaas/webhook")
-      .set("x-asaas-token", "asaas-secret-token")
-      .send({
+        status: "RECEIVED",
+        expectedFinancialStatus: "paid",
+        paymentDate: "2026-02-22",
+        dueDate: "2026-02-22",
+      },
+      {
         event: "PAYMENT_REFUNDED",
-        payment: {
-          id: "ch_123",
-          status: "REFUNDED",
-          value: 199.9,
-          dueDate: "2026-02-20",
-        },
-      });
+        status: "REFUNDED",
+        expectedFinancialStatus: "pending",
+        paymentDate: undefined,
+        dueDate: "2026-02-23",
+      },
+    ] as const;
 
-    expect(refunded.status).toBe(200);
-    expect(db.financial_records.length).toBe(1);
-    expect(db.financial_records[0]?.status).toBe("pending");
-    expect(db.asaas_charges[0]?.status).toBe("REFUNDED");
+    for (const step of matrix) {
+      const response = await request(app)
+        .post("/api/asaas/webhook")
+        .set("x-asaas-token", "asaas-secret-token")
+        .send({
+          event: step.event,
+          payment: {
+            id: "ch_123",
+            status: step.status,
+            value: 199.9,
+            paymentDate: step.paymentDate,
+            dueDate: step.dueDate,
+          },
+        });
+
+      expect(response.status).toBe(200);
+      expect(db.financial_records.length).toBe(1);
+      expect(db.financial_records[0]).toMatchObject({
+        clinic_id: "clinic-1",
+        patient_id: 21,
+        type: "income",
+        category: "Sessao Asaas",
+        description: "Asaas charge ch_123",
+        amount: 199.9,
+        status: step.expectedFinancialStatus,
+      });
+      expect(db.asaas_charges[0]?.status).toBe(step.status);
+      expect(db.asaas_charges[0]?.due_date).toBe(step.dueDate);
+    }
   });
 
   it("returns accepted when charge id is unknown locally", async () => {
@@ -708,6 +725,49 @@ describe("session fee billing source", () => {
 
     expect(db.asaas_charges.length).toBe(1);
     expect(db.asaas_charges[0]?.value).toBe(321.45);
+  });
+
+  it("uses fallback session value only when patient session_fee is not positive", async () => {
+    db.patients.push({
+      id: 56,
+      clinic_id: "clinic-1",
+      user_id: "pro-user",
+      name: "Paciente Sem Valor",
+      session_fee: 0,
+      billing_mode_override: "session",
+    });
+    db.patient_billing_profile = db.patient_billing_profile || [];
+    db.patient_billing_profile.push({
+      id: 9,
+      clinic_id: "clinic-1",
+      patient_id: 56,
+      asaas_customer_id: "cus_fallback",
+    });
+
+    const response = await request(app).post("/api/appointments").set("x-user-id", "pro-user").send({
+      patient_id: 56,
+      provider_user_id: "pro-user",
+      start_time: "2026-03-01T12:00:00.000Z",
+      status: "scheduled",
+      session_type: "individual",
+      session_mode: "in_person",
+    });
+
+    expect(response.status).toBe(201);
+
+    const paymentCalls = fetchMock.mock.calls.filter((call) => String(call[0]).includes("/payments"));
+    const lastPaymentCall = paymentCalls[paymentCalls.length - 1];
+    expect(lastPaymentCall).toBeTruthy();
+
+    const paymentBodyRaw = (lastPaymentCall?.[1] as RequestInit | undefined)?.body;
+    const paymentBody =
+      typeof paymentBodyRaw === "string" && paymentBodyRaw.length > 0
+        ? JSON.parse(paymentBodyRaw)
+        : {};
+    expect(paymentBody.value).toBe(150);
+
+    const createdCharge = db.asaas_charges.find((row) => Number(row.patient_id) === 56);
+    expect(createdCharge?.value).toBe(150);
   });
 });
 
@@ -824,5 +884,120 @@ describe("appointment cancellation reconciles linked Asaas charge", () => {
     expect(db.appointments.some((item) => Number(item.id) === 700)).toBe(false);
     expect(db.asaas_charges[0]?.status).toBe("CANCELLED");
     expect(db.financial_records[0]?.status).toBe("pending");
+  });
+});
+
+describe("monthly summary consistency after Asaas reconciliation", () => {
+  let app: Awaited<ReturnType<(typeof import("../../server"))["createApp"]>>;
+
+  beforeAll(async () => {
+    const created = await createTestApp({
+      env: {
+        NODE_ENV: "development",
+        ALLOW_DEV_USER_BYPASS: "true",
+        FEATURE_ASAAS_ENABLED: "true",
+        ASAAS_WEBHOOK_TOKEN: "asaas-secret-token",
+      },
+      seed: {
+        clinic_members: [
+          {
+            id: 1,
+            clinic_id: "clinic-1",
+            user_id: "pro-user",
+            role: "professional",
+            active: true,
+            created_at: "2026-02-01T00:00:00.000Z",
+          },
+        ],
+        patients: [
+          {
+            id: 88,
+            clinic_id: "clinic-1",
+            user_id: "pro-user",
+            name: "Paciente Mensal",
+            session_fee: 100,
+          },
+        ],
+        appointments: [
+          {
+            id: 801,
+            clinic_id: "clinic-1",
+            patient_id: 88,
+            status: "scheduled",
+            start_time: "2026-03-05T10:00:00.000Z",
+          },
+          {
+            id: 802,
+            clinic_id: "clinic-1",
+            patient_id: 88,
+            status: "completed",
+            start_time: "2026-03-12T10:00:00.000Z",
+          },
+        ],
+        asaas_charges: [
+          {
+            id: 980,
+            clinic_id: "clinic-1",
+            patient_id: 88,
+            appointment_id: 801,
+            asaas_charge_id: "ch_monthly_1",
+            status: "PENDING",
+            value: 100,
+            due_date: "2026-03-10",
+            billing_mode: "session",
+          },
+        ],
+      },
+    });
+    app = created.app;
+  });
+
+  it("keeps monthly paid/outstanding aligned when webhook changes status", async () => {
+    const received = await request(app)
+      .post("/api/asaas/webhook")
+      .set("x-asaas-token", "asaas-secret-token")
+      .send({
+        event: "PAYMENT_RECEIVED",
+        payment: {
+          id: "ch_monthly_1",
+          status: "RECEIVED",
+          value: 100,
+          paymentDate: "2026-03-10",
+          dueDate: "2026-03-10",
+        },
+      });
+    expect(received.status).toBe(200);
+
+    const paidSummary = await request(app)
+      .get("/api/financial/patient/88/monthly-summary")
+      .set("x-user-id", "pro-user")
+      .query({ month: "2026-03" });
+    expect(paidSummary.status).toBe(200);
+    expect(paidSummary.body?.gross_amount).toBe(200);
+    expect(paidSummary.body?.paid_amount).toBe(100);
+    expect(paidSummary.body?.outstanding_amount).toBe(100);
+
+    const refunded = await request(app)
+      .post("/api/asaas/webhook")
+      .set("x-asaas-token", "asaas-secret-token")
+      .send({
+        event: "PAYMENT_REFUNDED",
+        payment: {
+          id: "ch_monthly_1",
+          status: "REFUNDED",
+          value: 100,
+          dueDate: "2026-03-10",
+        },
+      });
+    expect(refunded.status).toBe(200);
+
+    const refundedSummary = await request(app)
+      .get("/api/financial/patient/88/monthly-summary")
+      .set("x-user-id", "pro-user")
+      .query({ month: "2026-03" });
+    expect(refundedSummary.status).toBe(200);
+    expect(refundedSummary.body?.gross_amount).toBe(200);
+    expect(refundedSummary.body?.paid_amount).toBe(0);
+    expect(refundedSummary.body?.outstanding_amount).toBe(200);
   });
 });
