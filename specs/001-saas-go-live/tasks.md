@@ -57,8 +57,8 @@ description: "Task list for Smart PSI SaaS public go-live hardening"
 
 ### Tests for User Story 1
 
-- [ ] T011 [P] [US1] Adicionar cenarios de auth obrigatoria em `tests/backend/security-hardening.test.ts`
-- [ ] T012 [P] [US1] Adicionar cenarios de RBAC `secretary` (leitura/escrita clinica) em `tests/backend/security-hardening.test.ts`
+- [x] T011 [P] [US1] Adicionar cenarios de auth obrigatoria em `tests/backend/security-hardening.test.ts`
+- [x] T012 [P] [US1] Adicionar cenarios de RBAC `secretary` (leitura/escrita clinica) em `tests/backend/security-hardening.test.ts`
 
 ### Implementation for User Story 1
 
