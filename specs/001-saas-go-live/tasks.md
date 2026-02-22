@@ -38,11 +38,11 @@ description: "Task list for Smart PSI SaaS public go-live hardening"
 
 **CRITICAL**: Nenhuma story deve seguir sem esta fase completa.
 
-- [ ] T005 [US1] Endurecer resolucao de contexto em `server.ts` para aceitar `x-user-id` apenas fora de producao com `ALLOW_DEV_USER_BYPASS=true`
-- [ ] T006 [P] [US1] Aplicar middleware de seguranca global em `server.ts` (`helmet`, `cors` allow-list, `compression`, rate limiting)
-- [ ] T007 [P] [US1] Implementar logging estruturado com `request_id` por requisicao em `server.ts`
-- [ ] T008 [US1] Fechar webhooks por configuracao/token em `server.ts` (`/api/integrations/google/webhook`, `/api/asaas/webhook`)
-- [ ] T009 [P] [US1] Sanitizar callback OAuth Google em `server.ts` para evitar interpolacao HTML insegura
+- [x] T005 [US1] Endurecer resolucao de contexto em `server.ts` para aceitar `x-user-id` apenas fora de producao com `ALLOW_DEV_USER_BYPASS=true`
+- [x] T006 [P] [US1] Aplicar middleware de seguranca global em `server.ts` (`helmet`, `cors` allow-list, `compression`, rate limiting)
+- [x] T007 [P] [US1] Implementar logging estruturado com `request_id` por requisicao em `server.ts`
+- [x] T008 [US1] Fechar webhooks por configuracao/token em `server.ts` (`/api/integrations/google/webhook`, `/api/asaas/webhook`)
+- [x] T009 [P] [US1] Sanitizar callback OAuth Google em `server.ts` para evitar interpolacao HTML insegura
 - [x] T010 [US1] Criar/expandir cobertura de teste de fundacao em `tests/backend/security-hardening.test.ts`
 
 **Checkpoint**: Foundation pronta para evolucao por historias.
@@ -91,7 +91,7 @@ description: "Task list for Smart PSI SaaS public go-live hardening"
 - [x] T023 [US2] Unificar reconciliacao de webhook Asaas para manter `financial_records` consistente em `server.ts`
 - [x] T024 [US2] Ajustar fluxo de cancelamento/exclusao de agendamento e cobranca em `server.ts`
 - [x] T025 [US2] Revisar resumo mensal e agregacoes financeiras em `server.ts`
-- [ ] T026 [US2] Validar tipos de dados financeiros compartilhados em `src/lib/types.ts` e consumo em `src/components/Financial.tsx`
+- [x] T026 [US2] Validar tipos de dados financeiros compartilhados em `src/lib/types.ts` e consumo em `src/components/Financial.tsx`
 
 **Checkpoint**: Financeiro consistente em todos os estados obrigatorios.
 
