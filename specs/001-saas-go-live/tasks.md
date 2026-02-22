@@ -129,8 +129,8 @@ description: "Task list for Smart PSI SaaS public go-live hardening"
 
 ### Tests for User Story 4
 
-- [ ] T035 [P] [US4] Expandir smoke e2e para login/signup/forgot/reset em `tests/e2e/smoke.spec.ts`
-- [ ] T036 [P] [US4] Cobrir restricoes de UI por role em `tests/e2e/smoke.spec.ts`
+- [x] T035 [P] [US4] Expandir smoke e2e para login/signup/forgot/reset em `tests/e2e/smoke.spec.ts`
+- [x] T036 [P] [US4] Cobrir restricoes de UI por role em `tests/e2e/smoke.spec.ts`
 
 ### Implementation for User Story 4
 
