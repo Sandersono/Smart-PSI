@@ -710,3 +710,119 @@ describe("session fee billing source", () => {
     expect(db.asaas_charges[0]?.value).toBe(321.45);
   });
 });
+
+describe("appointment cancellation reconciles linked Asaas charge", () => {
+  let app: Awaited<ReturnType<(typeof import("../../server"))["createApp"]>>;
+  let db: MockDb;
+  let fetchMock: ReturnType<typeof vi.fn>;
+
+  beforeAll(async () => {
+    fetchMock = vi.fn(async (input: string | URL) => {
+      const url = String(input);
+      if (url.includes("/payments/")) {
+        return new Response(JSON.stringify({ deleted: true }), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        });
+      }
+      return new Response(JSON.stringify({}), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      });
+    });
+    vi.stubGlobal("fetch", fetchMock as typeof fetch);
+
+    const created = await createTestApp({
+      env: {
+        NODE_ENV: "development",
+        ALLOW_DEV_USER_BYPASS: "true",
+        FEATURE_ASAAS_ENABLED: "true",
+        FEATURE_GOOGLE_ENABLED: "false",
+        ASAAS_API_KEY: "asaas-test-key",
+      },
+      seed: {
+        clinic_members: [
+          {
+            id: 1,
+            clinic_id: "clinic-1",
+            user_id: "pro-user",
+            role: "professional",
+            active: true,
+            created_at: "2026-02-01T00:00:00.000Z",
+          },
+        ],
+        patients: [
+          {
+            id: 77,
+            clinic_id: "clinic-1",
+            user_id: "pro-user",
+            name: "Paciente Cancelamento",
+            session_fee: 180,
+          },
+        ],
+        appointments: [
+          {
+            id: 700,
+            clinic_id: "clinic-1",
+            user_id: "pro-user",
+            provider_user_id: "pro-user",
+            patient_id: 77,
+            series_id: null,
+            series_sequence: null,
+            start_time: "2026-03-03T10:00:00.000Z",
+            google_event_id: null,
+            google_calendar_id: null,
+          },
+        ],
+        asaas_charges: [
+          {
+            id: 990,
+            clinic_id: "clinic-1",
+            patient_id: 77,
+            appointment_id: 700,
+            asaas_charge_id: "pay_cancel_1",
+            status: "PENDING",
+            value: 180,
+            due_date: "2026-03-03",
+            billing_mode: "session",
+          },
+        ],
+        financial_records: [
+          {
+            id: 4500,
+            clinic_id: "clinic-1",
+            user_id: "pro-user",
+            patient_id: 77,
+            amount: 180,
+            type: "income",
+            category: "Sessao Asaas",
+            description: "Asaas charge pay_cancel_1",
+            date: "2026-03-03T00:00:00.000Z",
+            status: "paid",
+          },
+        ],
+      },
+    });
+    app = created.app;
+    db = created.db;
+  });
+
+  afterAll(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it("cancels linked charge and reconciles financial record on appointment delete", async () => {
+    const response = await request(app).delete("/api/appointments/700").set("x-user-id", "pro-user");
+    expect(response.status).toBe(200);
+    expect(response.body?.success).toBe(true);
+
+    const deletePaymentCall = fetchMock.mock.calls.find((call) =>
+      String(call[0]).includes("/payments/pay_cancel_1")
+    );
+    expect(deletePaymentCall).toBeTruthy();
+
+    expect(db.appointments.some((item) => Number(item.id) === 700)).toBe(false);
+    expect(db.asaas_charges[0]?.status).toBe("CANCELLED");
+    expect(db.financial_records[0]?.status).toBe("pending");
+  });
+});

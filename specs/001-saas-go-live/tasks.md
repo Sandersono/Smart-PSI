@@ -82,7 +82,7 @@ description: "Task list for Smart PSI SaaS public go-live hardening"
 ### Tests for User Story 2
 
 - [ ] T019 [P] [US2] Cobrir reconciliacao Asaas (`PENDING`, `OVERDUE`, `RECEIVED`, `REFUNDED`) em `tests/backend/security-hardening.test.ts`
-- [ ] T020 [P] [US2] Cobrir cancelamento/exclusao de agendamento com cobranca vinculada em `tests/backend/security-hardening.test.ts`
+- [x] T020 [P] [US2] Cobrir cancelamento/exclusao de agendamento com cobranca vinculada em `tests/backend/security-hardening.test.ts`
 
 ### Implementation for User Story 2
 
