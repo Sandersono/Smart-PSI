@@ -154,7 +154,7 @@ description: "Task list for Smart PSI SaaS public go-live hardening"
 - [x] T045 [Shared] Rodar `.\.specify\scripts\powershell\update-agent-context.ps1 -AgentType codex`
 - [x] T046 [Shared] Rodar `.\.specify\scripts\powershell\check-prerequisites.ps1 -Json -RequireTasks -IncludeTasks`
 - [ ] T047 [Shared] Validar compose em staging com `docker compose up -d` e smoke rapido
-- [ ] T048 [Shared] Executar checklist LGPD operacional (logs sem dados sensiveis, RBAC validado, trilha de incidentes)
+- [x] T048 [Shared] Executar checklist LGPD operacional (logs sem dados sensiveis, RBAC validado, trilha de incidentes)
 - [ ] T049 [Shared] Executar canario com clinicas piloto por 7 dias sem incidentes criticos
 - [ ] T050 [Shared] Liberar go-live publico apos gate verde
 
