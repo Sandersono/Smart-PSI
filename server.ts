@@ -52,6 +52,7 @@ const corsAllowedOrigins = String(process.env.CORS_ALLOWED_ORIGINS || "")
   .filter(Boolean);
 const rateLimitWindowMs = Number(process.env.RATE_LIMIT_WINDOW_MS || "900000");
 const rateLimitMax = Number(process.env.RATE_LIMIT_MAX || "300");
+const frontendSupabaseUrl = process.env.VITE_SUPABASE_URL || "";
 
 const missingServerEnv = [
   ["SUPABASE_URL", supabaseUrl],
@@ -461,6 +462,50 @@ function escapeHtml(value: string) {
     .replace(/>/g, "&gt;")
     .replace(/"/g, "&quot;")
     .replace(/'/g, "&#39;");
+}
+
+function toOriginOrNull(value: string | null | undefined) {
+  if (!value) return null;
+  try {
+    return new URL(value).origin;
+  } catch {
+    return null;
+  }
+}
+
+function toRealtimeOriginOrNull(value: string | null | undefined) {
+  if (!value) return null;
+  try {
+    const parsed = new URL(value);
+    if (parsed.protocol === "https:") {
+      return `wss://${parsed.host}`;
+    }
+    if (parsed.protocol === "http:") {
+      return `ws://${parsed.host}`;
+    }
+    return null;
+  } catch {
+    return null;
+  }
+}
+
+function buildConnectSrc() {
+  const origins = new Set<string>(["'self'"]);
+  const sentryOrigin = toOriginOrNull(sentryDsn || null);
+  const candidates = [supabaseUrl, frontendSupabaseUrl, sentryOrigin];
+
+  candidates.forEach((candidate) => {
+    const origin = toOriginOrNull(candidate);
+    const realtimeOrigin = toRealtimeOriginOrNull(candidate);
+    if (origin) {
+      origins.add(origin);
+    }
+    if (realtimeOrigin) {
+      origins.add(realtimeOrigin);
+    }
+  });
+
+  return Array.from(origins);
 }
 
 function normalizeFinancialStatus(value: unknown) {
@@ -1921,6 +1966,12 @@ export async function createApp(options: CreateAppOptions = {}) {
   app.use(
     helmet({
       crossOriginResourcePolicy: { policy: "cross-origin" },
+      contentSecurityPolicy: {
+        useDefaults: true,
+        directives: {
+          connectSrc: buildConnectSrc(),
+        },
+      },
     })
   );
   app.use(
