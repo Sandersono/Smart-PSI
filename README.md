@@ -20,6 +20,7 @@ Aplicacao full-stack (React + Express) para operacao de clinica: pacientes, agen
    - `supabase/migrations/20260221_002_clinic_rbac_agenda_asaas.sql`
    - `supabase/migrations/20260221_003_google_agenda_notes_source.sql`
    - `supabase/migrations/20260221_004_financial_monthly_asaas_settings.sql`
+   - `supabase/migrations/20260222_005_ai_usage_meter.sql`
 4. Rode a aplicacao:
    - `npm run dev`
 
@@ -31,6 +32,18 @@ Aplicacao full-stack (React + Express) para operacao de clinica: pacientes, agen
 - Webhooks Google/Asaas retornam `503` quando token nao configurado.
 - RBAC clinico: secretaria sem leitura/escrita de conteudo clinico de pacientes.
 - Dependencias com overrides para mitigar vulnerabilidades transitivas (`minimatch`/`glob`).
+
+## Medidor de IA
+
+- Endpoint de transcricao (`/api/ai/process-audio`) registra consumo estimado em `ai_usage_events`.
+- Resumo mensal por clinica: `GET /api/ai/usage/summary?month=YYYY-MM`.
+- Parametros de estimativa e custo por env:
+  - `AI_MODEL_NAME`
+  - `AI_TOKEN_COST_PER_MILLION`
+  - `AI_AUDIO_COST_PER_MINUTE`
+  - `AI_AUDIO_TOKENS_PER_MINUTE`
+  - `AI_AUDIO_AVG_BITRATE_KBPS`
+  - `AI_COST_CURRENCY`
 
 ## Testes
 

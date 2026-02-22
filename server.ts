@@ -53,6 +53,12 @@ const corsAllowedOrigins = String(process.env.CORS_ALLOWED_ORIGINS || "")
 const rateLimitWindowMs = Number(process.env.RATE_LIMIT_WINDOW_MS || "900000");
 const rateLimitMax = Number(process.env.RATE_LIMIT_MAX || "300");
 const frontendSupabaseUrl = process.env.VITE_SUPABASE_URL || "";
+const aiModelName = process.env.AI_MODEL_NAME || "gemini-2.5-flash";
+const aiTokenCostPerMillion = Number(process.env.AI_TOKEN_COST_PER_MILLION || "0");
+const aiAudioCostPerMinute = Number(process.env.AI_AUDIO_COST_PER_MINUTE || "0");
+const aiAudioTokensPerMinute = Number(process.env.AI_AUDIO_TOKENS_PER_MINUTE || "900");
+const aiAudioAvgBitrateKbps = Number(process.env.AI_AUDIO_AVG_BITRATE_KBPS || "64");
+const aiCostCurrency = process.env.AI_COST_CURRENCY || "BRL";
 
 const missingServerEnv = [
   ["SUPABASE_URL", supabaseUrl],
@@ -99,6 +105,7 @@ type ApplyScope = "single" | "following" | "all";
 type BillingMode = "session" | "monthly";
 type NoteSource = "audio" | "quick" | "manual";
 type GoogleReminderPreset = "light" | "standard" | "intense";
+type AiUsageStatus = "success" | "failed";
 
 class HttpError extends Error {
   status: number;
@@ -142,7 +149,7 @@ async function ensureClinicMembership(userId: string, preferredClinicId?: string
     if (code === "42P01" || code === "PGRST205") {
       throw new HttpError(
         503,
-        "Database schema is outdated. Run migrations 20260221_002_clinic_rbac_agenda_asaas.sql, 20260221_003_google_agenda_notes_source.sql and 20260221_004_financial_monthly_asaas_settings.sql."
+        "Database schema is outdated. Run migrations 20260221_002_clinic_rbac_agenda_asaas.sql, 20260221_003_google_agenda_notes_source.sql, 20260221_004_financial_monthly_asaas_settings.sql and 20260222_005_ai_usage_meter.sql."
       );
     }
     throw membershipsError;
@@ -556,11 +563,166 @@ function validateFinalNotePayload(
   return Boolean(patientId && complaint && intervention && nextFocus);
 }
 
+type AiUsageMetrics = {
+  model: string;
+  input_audio_bytes: number;
+  input_seconds: number;
+  input_tokens_estimated: number;
+  output_tokens_estimated: number;
+  total_tokens_estimated: number;
+  estimated_cost: number;
+  currency: string;
+  prompt_chars: number;
+  output_chars: number;
+};
+
+function normalizeFiniteNumber(value: number, fallback: number) {
+  return Number.isFinite(value) ? value : fallback;
+}
+
+function roundNumber(value: number, digits = 6) {
+  if (!Number.isFinite(value)) return 0;
+  return Number(value.toFixed(digits));
+}
+
+function estimateTokensFromChars(chars: number) {
+  const normalized = Math.max(0, Math.trunc(chars));
+  return Math.ceil(normalized / 4);
+}
+
+function estimateAudioDurationSeconds(audioBytes: number) {
+  const safeBytes = Math.max(0, Math.trunc(audioBytes));
+  const bitrateKbps = normalizeFiniteNumber(aiAudioAvgBitrateKbps, 64);
+  if (safeBytes <= 0 || bitrateKbps <= 0) return 0;
+  const seconds = (safeBytes * 8) / (bitrateKbps * 1000);
+  return roundNumber(seconds, 2);
+}
+
+function estimateAudioInputTokens(audioSeconds: number) {
+  const tokensPerMinute = normalizeFiniteNumber(aiAudioTokensPerMinute, 900);
+  if (tokensPerMinute <= 0 || audioSeconds <= 0) return 0;
+  return Math.max(0, Math.round((audioSeconds / 60) * tokensPerMinute));
+}
+
+function estimateAiCost(totalTokens: number, audioSeconds: number) {
+  const tokenCostPerMillion = normalizeFiniteNumber(aiTokenCostPerMillion, 0);
+  const audioCostPerMinute = normalizeFiniteNumber(aiAudioCostPerMinute, 0);
+  const tokenCost =
+    tokenCostPerMillion > 0 ? (Math.max(0, totalTokens) / 1_000_000) * tokenCostPerMillion : 0;
+  const audioCost = audioCostPerMinute > 0 ? (Math.max(0, audioSeconds) / 60) * audioCostPerMinute : 0;
+  return roundNumber(tokenCost + audioCost, 6);
+}
+
+function buildAiUsageMetrics(params: {
+  model: string;
+  audioBytes: number;
+  promptChars: number;
+  outputChars: number;
+}): AiUsageMetrics {
+  const audioSeconds = estimateAudioDurationSeconds(params.audioBytes);
+  const inputTokens = estimateAudioInputTokens(audioSeconds) + estimateTokensFromChars(params.promptChars);
+  const outputTokens = estimateTokensFromChars(params.outputChars);
+  const totalTokens = inputTokens + outputTokens;
+  const estimatedCost = estimateAiCost(totalTokens, audioSeconds);
+
+  return {
+    model: params.model,
+    input_audio_bytes: Math.max(0, Math.trunc(params.audioBytes)),
+    input_seconds: audioSeconds,
+    input_tokens_estimated: inputTokens,
+    output_tokens_estimated: outputTokens,
+    total_tokens_estimated: totalTokens,
+    estimated_cost: estimatedCost,
+    currency: aiCostCurrency,
+    prompt_chars: Math.max(0, Math.trunc(params.promptChars)),
+    output_chars: Math.max(0, Math.trunc(params.outputChars)),
+  };
+}
+
+function errorCodeOf(error: unknown) {
+  return (
+    (error as { code?: string } | null | undefined)?.code ||
+    (error as { error?: { code?: string } } | null | undefined)?.error?.code ||
+    ""
+  );
+}
+
+function isMissingRelationError(error: unknown) {
+  const code = errorCodeOf(error);
+  return code === "42P01" || code === "PGRST205";
+}
+
+type RegisterAiUsageEventPayload = {
+  context: UserContext;
+  patientId: number | null;
+  noteId?: number | null;
+  status: AiUsageStatus;
+  metrics: AiUsageMetrics;
+  requestId?: string | null;
+  errorMessage?: string | null;
+  metadata?: Record<string, unknown>;
+};
+
+async function registerAiUsageEvent(payload: RegisterAiUsageEventPayload) {
+  try {
+    const { error } = await supabase.from("ai_usage_events").insert({
+      clinic_id: payload.context.clinicId,
+      user_id: payload.context.userId,
+      patient_id: payload.patientId,
+      note_id: payload.noteId ?? null,
+      operation: "audio_transcription",
+      provider: "google",
+      model: payload.metrics.model,
+      status: payload.status,
+      input_audio_bytes: payload.metrics.input_audio_bytes,
+      input_seconds: payload.metrics.input_seconds,
+      input_tokens_estimated: payload.metrics.input_tokens_estimated,
+      output_tokens_estimated: payload.metrics.output_tokens_estimated,
+      total_tokens_estimated: payload.metrics.total_tokens_estimated,
+      estimated_cost: payload.metrics.estimated_cost,
+      currency: payload.metrics.currency,
+      error_message: toNullableString(payload.errorMessage) || null,
+      request_id: toNullableString(payload.requestId) || null,
+      metadata: {
+        prompt_chars: payload.metrics.prompt_chars,
+        output_chars: payload.metrics.output_chars,
+        ...(payload.metadata || {}),
+      },
+    });
+
+    if (error) {
+      if (isMissingRelationError(error)) {
+        console.warn(
+          "ai_usage_events table is missing. Run migration 20260222_005_ai_usage_meter.sql."
+        );
+        return;
+      }
+      throw error;
+    }
+  } catch (error) {
+    if (isMissingRelationError(error)) {
+      console.warn("AI usage meter schema not found. Skipping usage event registration.");
+      return;
+    }
+    console.error("[registerAiUsageEvent]", error);
+  }
+}
+
+type ProcessAudioResult = {
+  note: {
+    complaint: string;
+    intervention: string;
+    next_focus: string;
+  };
+  metrics: AiUsageMetrics;
+};
+
 async function processAudioToNote(
   audioBase64: string,
   mimeType: string,
-  preferences: AiNotePreferences
-) {
+  preferences: AiNotePreferences,
+  audioBytes: number
+): Promise<ProcessAudioResult> {
   if (!gemini) {
     throw new Error("GEMINI_API_KEY is not configured on server.");
   }
@@ -580,7 +742,7 @@ async function processAudioToNote(
   `;
 
   const response = await gemini.models.generateContent({
-    model: "gemini-2.5-flash",
+    model: aiModelName,
     contents: [
       {
         parts: [
@@ -608,12 +770,21 @@ async function processAudioToNote(
     },
   });
 
-  const parsed = JSON.parse(response.text || "{}");
-  return {
+  const responseText = String((response as { text?: string }).text || "{}");
+  const parsed = JSON.parse(responseText || "{}");
+  const note = {
     complaint: String(parsed.complaint || "Nao identificado - revisar"),
     intervention: String(parsed.intervention || "Nao identificado - revisar"),
     next_focus: String(parsed.next_focus || "Nao identificado - revisar"),
   };
+  const metrics = buildAiUsageMetrics({
+    model: aiModelName,
+    audioBytes,
+    promptChars: prompt.length,
+    outputChars: responseText.length,
+  });
+
+  return { note, metrics };
 }
 
 function dayRangeUtc(dayOffset: number) {
@@ -2636,6 +2807,7 @@ export async function createApp(options: CreateAppOptions = {}) {
 
     const audioBase64 = toNullableString(req.body?.audioBase64);
     const mimeType = toNullableString(req.body?.mimeType);
+    const patientId = toNullableNumber(req.body?.patient_id);
     const preferences = normalizeNotePreferences(req.body?.preferences);
 
     if (!audioBase64 || !mimeType) {
@@ -2643,11 +2815,239 @@ export async function createApp(options: CreateAppOptions = {}) {
       return;
     }
 
+    let audioBytes = 0;
     try {
-      const note = await processAudioToNote(audioBase64, mimeType, preferences);
-      res.json(note);
+      audioBytes = Buffer.from(audioBase64, "base64").byteLength;
+    } catch {
+      res.status(400).json({ error: "Invalid audioBase64 payload" });
+      return;
+    }
+    if (audioBytes <= 0) {
+      res.status(400).json({ error: "Invalid audio payload" });
+      return;
+    }
+
+    const requestId = toNullableString(String(res.getHeader("x-request-id") || ""));
+    const fallbackMetrics = buildAiUsageMetrics({
+      model: aiModelName,
+      audioBytes,
+      promptChars: 0,
+      outputChars: 0,
+    });
+    let aiProcessingAttempted = false;
+
+    try {
+      if (patientId !== null) {
+        await ensurePatientBelongsClinic(context.clinicId, patientId);
+      }
+
+      aiProcessingAttempted = true;
+      const result = await processAudioToNote(audioBase64, mimeType, preferences, audioBytes);
+      await registerAiUsageEvent({
+        context,
+        patientId,
+        status: "success",
+        metrics: result.metrics,
+        requestId,
+        metadata: {
+          mime_type: mimeType,
+        },
+      });
+
+      res.json({
+        ...result.note,
+        usage: {
+          model: result.metrics.model,
+          input_seconds: result.metrics.input_seconds,
+          total_tokens_estimated: result.metrics.total_tokens_estimated,
+          estimated_cost: result.metrics.estimated_cost,
+          currency: result.metrics.currency,
+        },
+      });
     } catch (error) {
+      if (aiProcessingAttempted) {
+        await registerAiUsageEvent({
+          context,
+          patientId,
+          status: "failed",
+          metrics: fallbackMetrics,
+          requestId,
+          errorMessage: error instanceof Error ? error.message : String(error),
+          metadata: {
+            mime_type: mimeType,
+          },
+        });
+      }
       handleRouteError(res, error, "POST /api/ai/process-audio");
+    }
+  });
+
+  app.get("/api/ai/usage/summary", async (req, res) => {
+    const context = await requireUserContext(req, res, ["admin", "professional"]);
+    if (!context) return;
+
+    const month = toNullableString(req.query.month) || new Date().toISOString().slice(0, 7);
+
+    try {
+      const { period, startIso, endIso } = resolveMonthRange(month);
+      const { data, error } = await supabase
+        .from("ai_usage_events")
+        .select(
+          "id, model, status, input_audio_bytes, input_seconds, input_tokens_estimated, output_tokens_estimated, total_tokens_estimated, estimated_cost, currency, created_at"
+        )
+        .eq("clinic_id", context.clinicId)
+        .gte("created_at", startIso)
+        .lt("created_at", endIso)
+        .order("created_at", { ascending: true });
+
+      if (error) {
+        if (isMissingRelationError(error)) {
+          res.status(503).json({
+            error:
+              "AI usage meter schema is not configured. Run migration 20260222_005_ai_usage_meter.sql.",
+          });
+          return;
+        }
+        throw error;
+      }
+
+      const rows = (data ?? []) as Array<Record<string, unknown>>;
+      const totals = {
+        requests: 0,
+        success_count: 0,
+        failed_count: 0,
+        input_audio_bytes: 0,
+        input_seconds: 0,
+        input_minutes: 0,
+        input_tokens_estimated: 0,
+        output_tokens_estimated: 0,
+        total_tokens_estimated: 0,
+        estimated_cost: 0,
+      };
+
+      const byModelMap = new Map<
+        string,
+        {
+          model: string;
+          requests: number;
+          success_count: number;
+          failed_count: number;
+          total_tokens_estimated: number;
+          estimated_cost: number;
+        }
+      >();
+      const byDayMap = new Map<
+        string,
+        {
+          day: string;
+          requests: number;
+          success_count: number;
+          failed_count: number;
+          total_tokens_estimated: number;
+          estimated_cost: number;
+        }
+      >();
+
+      for (const row of rows) {
+        const model = toNullableString(row.model) || aiModelName;
+        const status: AiUsageStatus = toNullableString(row.status) === "failed" ? "failed" : "success";
+        const createdAt = toNullableString(row.created_at) || new Date().toISOString();
+        const day = createdAt.slice(0, 10);
+        const inputAudioBytes = Math.max(0, Math.trunc(toNullableNumber(row.input_audio_bytes) || 0));
+        const inputSeconds = Math.max(0, toNullableNumber(row.input_seconds) || 0);
+        const inputTokens = Math.max(0, Math.trunc(toNullableNumber(row.input_tokens_estimated) || 0));
+        const outputTokens = Math.max(0, Math.trunc(toNullableNumber(row.output_tokens_estimated) || 0));
+        const totalTokens = Math.max(0, Math.trunc(toNullableNumber(row.total_tokens_estimated) || 0));
+        const estimatedCost = Math.max(0, toNullableNumber(row.estimated_cost) || 0);
+
+        totals.requests += 1;
+        totals.success_count += status === "success" ? 1 : 0;
+        totals.failed_count += status === "failed" ? 1 : 0;
+        totals.input_audio_bytes += inputAudioBytes;
+        totals.input_seconds += inputSeconds;
+        totals.input_tokens_estimated += inputTokens;
+        totals.output_tokens_estimated += outputTokens;
+        totals.total_tokens_estimated += totalTokens;
+        totals.estimated_cost += estimatedCost;
+
+        const modelBucket = byModelMap.get(model) || {
+          model,
+          requests: 0,
+          success_count: 0,
+          failed_count: 0,
+          total_tokens_estimated: 0,
+          estimated_cost: 0,
+        };
+        modelBucket.requests += 1;
+        modelBucket.success_count += status === "success" ? 1 : 0;
+        modelBucket.failed_count += status === "failed" ? 1 : 0;
+        modelBucket.total_tokens_estimated += totalTokens;
+        modelBucket.estimated_cost += estimatedCost;
+        byModelMap.set(model, modelBucket);
+
+        const dayBucket = byDayMap.get(day) || {
+          day,
+          requests: 0,
+          success_count: 0,
+          failed_count: 0,
+          total_tokens_estimated: 0,
+          estimated_cost: 0,
+        };
+        dayBucket.requests += 1;
+        dayBucket.success_count += status === "success" ? 1 : 0;
+        dayBucket.failed_count += status === "failed" ? 1 : 0;
+        dayBucket.total_tokens_estimated += totalTokens;
+        dayBucket.estimated_cost += estimatedCost;
+        byDayMap.set(day, dayBucket);
+      }
+
+      totals.input_minutes = roundNumber(totals.input_seconds / 60, 2);
+      totals.input_seconds = roundNumber(totals.input_seconds, 2);
+      totals.estimated_cost = roundNumber(totals.estimated_cost, 6);
+
+      const byModel = Array.from(byModelMap.values())
+        .map((item) => ({
+          ...item,
+          estimated_cost: roundNumber(item.estimated_cost, 6),
+        }))
+        .sort((a, b) => b.requests - a.requests);
+      const byDay = Array.from(byDayMap.values())
+        .map((item) => ({
+          ...item,
+          estimated_cost: roundNumber(item.estimated_cost, 6),
+        }))
+        .sort((a, b) => (a.day < b.day ? -1 : a.day > b.day ? 1 : 0));
+
+      const recent = rows
+        .slice(-20)
+        .reverse()
+        .map((row) => ({
+          id: toNullableNumber(row.id),
+          model: toNullableString(row.model) || aiModelName,
+          status: toNullableString(row.status) === "failed" ? "failed" : "success",
+          created_at: toNullableString(row.created_at),
+          total_tokens_estimated: Math.max(
+            0,
+            Math.trunc(toNullableNumber(row.total_tokens_estimated) || 0)
+          ),
+          estimated_cost: roundNumber(Math.max(0, toNullableNumber(row.estimated_cost) || 0), 6),
+        }));
+
+      res.json({
+        period,
+        pricing: {
+          token_cost_per_million: normalizeFiniteNumber(aiTokenCostPerMillion, 0),
+          audio_cost_per_minute: normalizeFiniteNumber(aiAudioCostPerMinute, 0),
+          audio_tokens_per_minute: normalizeFiniteNumber(aiAudioTokensPerMinute, 900),
+          currency: aiCostCurrency,
+        },
+        totals,
+        by_model: byModel,
+        by_day: byDay,
+        recent,
+      });
+    } catch (error) {
+      handleRouteError(res, error, "GET /api/ai/usage/summary");
     }
   });
 

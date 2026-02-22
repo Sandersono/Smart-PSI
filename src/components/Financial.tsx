@@ -17,7 +17,7 @@ import {
 import { cn } from "../lib/utils";
 import { ApiError, apiRequest } from "../lib/api";
 import { formatLocalDateInput, formatLocalMonthInput, toLocalDateInput } from "../lib/date";
-import { FinancialRecord, Patient, UserRole } from "../lib/types";
+import { AiUsageSummary, FinancialRecord, Patient, UserRole } from "../lib/types";
 
 interface FinancialProps {
   accessToken: string;
@@ -111,6 +111,9 @@ export const Financial = ({ accessToken, role }: FinancialProps) => {
   const [monthlySummary, setMonthlySummary] = useState<MonthlySummary | null>(null);
   const [isLoadingMonthlySummary, setIsLoadingMonthlySummary] = useState(false);
   const [isGeneratingMonthly, setIsGeneratingMonthly] = useState(false);
+  const [aiUsageMonth, setAiUsageMonth] = useState<string>(currentMonthRef());
+  const [aiUsageSummary, setAiUsageSummary] = useState<AiUsageSummary | null>(null);
+  const [isLoadingAiUsage, setIsLoadingAiUsage] = useState(false);
   const canManageFinancial = role === "admin" || role === "professional";
 
   useEffect(() => {
@@ -143,6 +146,11 @@ export const Financial = ({ accessToken, role }: FinancialProps) => {
     fetchPatientTerms(Number(selectedPatientId));
     fetchMonthlySummary(Number(selectedPatientId), monthlyRef);
   }, [selectedPatientId, monthlyRef, accessToken, canManageFinancial]);
+
+  useEffect(() => {
+    if (!canManageFinancial) return;
+    fetchAiUsageSummary(aiUsageMonth);
+  }, [aiUsageMonth, accessToken, canManageFinancial]);
 
   const fetchFinancial = async () => {
     setIsLoading(true);
@@ -293,6 +301,29 @@ export const Financial = ({ accessToken, role }: FinancialProps) => {
       setFeedback({ type: "error", message: "Falha ao gerar fechamento mensal." });
     } finally {
       setIsGeneratingMonthly(false);
+    }
+  };
+
+  const fetchAiUsageSummary = async (month: string) => {
+    setIsLoadingAiUsage(true);
+    try {
+      const data = await apiRequest<AiUsageSummary>(
+        `/api/ai/usage/summary?month=${month}`,
+        accessToken
+      );
+      setAiUsageSummary(data);
+    } catch (error: unknown) {
+      console.error("Failed to load AI usage summary", error);
+      setAiUsageSummary(null);
+      setFeedback({
+        type: "error",
+        message:
+          error instanceof ApiError
+            ? error.message
+            : "Falha ao carregar medidor de uso da IA.",
+      });
+    } finally {
+      setIsLoadingAiUsage(false);
     }
   };
 
@@ -770,6 +801,144 @@ export const Financial = ({ accessToken, role }: FinancialProps) => {
         <div className="glass-panel p-6 border border-warning/20 bg-warning/10 text-warning">
           Perfil de secretaria: configuracoes financeiras avancadas e ajustes de cobranca estao
           ocultos.
+        </div>
+      )}
+
+      {canManageFinancial && (
+        <div className="glass-panel p-6 space-y-4">
+          <div className="flex flex-col md:flex-row md:items-center justify-between gap-3">
+            <div>
+              <h3 className="text-lg font-bold text-slate-800">Medidor de uso da IA</h3>
+              <p className="text-sm text-slate-500">
+                Consumo estimado de transcricoes por competencia.
+              </p>
+            </div>
+            <input
+              type="month"
+              value={aiUsageMonth}
+              onChange={(e) => setAiUsageMonth(e.target.value)}
+              className="apple-input w-full md:w-[220px]"
+            />
+          </div>
+
+          {isLoadingAiUsage ? (
+            <p className="text-sm text-slate-500">Carregando uso de IA...</p>
+          ) : aiUsageSummary ? (
+            <>
+              <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+                <div className="rounded-xl border border-black/10 p-4 bg-white/50">
+                  <p className="text-[10px] font-bold uppercase tracking-widest text-slate-400">
+                    Requisicoes IA
+                  </p>
+                  <p className="text-2xl font-bold text-petroleum">{aiUsageSummary.totals.requests}</p>
+                  <p className="text-xs text-slate-500">
+                    {aiUsageSummary.totals.success_count} sucesso / {aiUsageSummary.totals.failed_count} falha
+                  </p>
+                </div>
+                <div className="rounded-xl border border-black/10 p-4 bg-white/50">
+                  <p className="text-[10px] font-bold uppercase tracking-widest text-slate-400">
+                    Audio processado
+                  </p>
+                  <p className="text-2xl font-bold text-petroleum">
+                    {Number(aiUsageSummary.totals.input_minutes || 0).toLocaleString("pt-BR", {
+                      minimumFractionDigits: 2,
+                    })}{" "}
+                    min
+                  </p>
+                  <p className="text-xs text-slate-500">
+                    {Math.round(Number(aiUsageSummary.totals.input_audio_bytes || 0) / 1024)} KB
+                  </p>
+                </div>
+                <div className="rounded-xl border border-black/10 p-4 bg-white/50">
+                  <p className="text-[10px] font-bold uppercase tracking-widest text-slate-400">
+                    Tokens estimados
+                  </p>
+                  <p className="text-2xl font-bold text-petroleum">
+                    {Number(aiUsageSummary.totals.total_tokens_estimated || 0).toLocaleString("pt-BR")}
+                  </p>
+                  <p className="text-xs text-slate-500">
+                    Entrada {Number(aiUsageSummary.totals.input_tokens_estimated || 0).toLocaleString("pt-BR")} /
+                    Saida {Number(aiUsageSummary.totals.output_tokens_estimated || 0).toLocaleString("pt-BR")}
+                  </p>
+                </div>
+                <div className="rounded-xl border border-black/10 p-4 bg-petroleum text-white">
+                  <p className="text-[10px] font-bold uppercase tracking-widest text-white/60">
+                    Custo estimado
+                  </p>
+                  <p className="text-2xl font-bold">
+                    {aiUsageSummary.pricing.currency}{" "}
+                    {Number(aiUsageSummary.totals.estimated_cost || 0).toLocaleString("pt-BR", {
+                      minimumFractionDigits: 4,
+                      maximumFractionDigits: 6,
+                    })}
+                  </p>
+                  <p className="text-xs text-white/70">
+                    {aiUsageSummary.period} • modelo principal {aiUsageSummary.by_model[0]?.model || "-"}
+                  </p>
+                </div>
+              </div>
+
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div className="rounded-xl border border-black/10 p-4 bg-white/50">
+                  <p className="text-[10px] font-bold uppercase tracking-widest text-slate-400 mb-2">
+                    Distribuicao por modelo
+                  </p>
+                  {aiUsageSummary.by_model.length === 0 ? (
+                    <p className="text-sm text-slate-500">Sem uso de IA nesta competencia.</p>
+                  ) : (
+                    <div className="space-y-2">
+                      {aiUsageSummary.by_model.slice(0, 5).map((item) => (
+                        <div
+                          key={item.model}
+                          className="flex items-center justify-between text-sm border-b border-black/5 pb-2 last:border-0 last:pb-0"
+                        >
+                          <div>
+                            <p className="font-semibold text-slate-700">{item.model}</p>
+                            <p className="text-xs text-slate-500">
+                              {item.requests} req • {item.success_count} ok / {item.failed_count} falha
+                            </p>
+                          </div>
+                          <p className="font-bold text-slate-700">
+                            {Number(item.total_tokens_estimated || 0).toLocaleString("pt-BR")}
+                          </p>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+
+                <div className="rounded-xl border border-black/10 p-4 bg-white/50">
+                  <p className="text-[10px] font-bold uppercase tracking-widest text-slate-400 mb-2">
+                    Ultimos eventos
+                  </p>
+                  {aiUsageSummary.recent.length === 0 ? (
+                    <p className="text-sm text-slate-500">Sem eventos recentes.</p>
+                  ) : (
+                    <div className="space-y-2">
+                      {aiUsageSummary.recent.slice(0, 5).map((item) => (
+                        <div
+                          key={`${item.id ?? "event"}-${item.created_at ?? ""}`}
+                          className="flex items-center justify-between text-sm border-b border-black/5 pb-2 last:border-0 last:pb-0"
+                        >
+                          <div>
+                            <p className="font-semibold text-slate-700">{item.model}</p>
+                            <p className="text-xs text-slate-500">
+                              {(item.created_at || "").replace("T", " ").slice(0, 16)} • {item.status}
+                            </p>
+                          </div>
+                          <p className="font-bold text-slate-700">
+                            {Number(item.total_tokens_estimated || 0).toLocaleString("pt-BR")}
+                          </p>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              </div>
+            </>
+          ) : (
+            <p className="text-sm text-slate-500">Sem dados de uso de IA para a competencia selecionada.</p>
+          )}
         </div>
       )}
 

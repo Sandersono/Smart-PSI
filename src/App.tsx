@@ -335,7 +335,7 @@ export default function App() {
           <p className="text-sm text-slate-500">
             Execute no Supabase SQL Editor: `supabase/migrations/20260221_002_clinic_rbac_agenda_asaas.sql`,
             `supabase/migrations/20260221_003_google_agenda_notes_source.sql` e
-            `supabase/migrations/20260221_004_financial_monthly_asaas_settings.sql`.
+            `supabase/migrations/20260221_004_financial_monthly_asaas_settings.sql`, `supabase/migrations/20260222_005_ai_usage_meter.sql`.
           </p>
         </div>
       </div>

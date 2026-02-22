@@ -304,6 +304,7 @@ function createSupabaseMock(seed: Partial<MockDb> = {}) {
 async function createTestApp(options: {
   env?: Record<string, string | undefined>;
   seed?: Partial<MockDb>;
+  mockGeminiResponseText?: string;
 } = {}) {
   vi.resetModules();
 
@@ -333,6 +334,20 @@ async function createTestApp(options: {
   vi.doMock("@supabase/supabase-js", () => ({
     createClient: vi.fn(() => client),
   }));
+  if (options.mockGeminiResponseText !== undefined) {
+    const responseText = options.mockGeminiResponseText;
+    vi.doMock("@google/genai", () => ({
+      GoogleGenAI: class MockGoogleGenAI {
+        models = {
+          generateContent: vi.fn(async () => ({ text: responseText })),
+        };
+      },
+      Type: {
+        OBJECT: "OBJECT",
+        STRING: "STRING",
+      },
+    }));
+  }
 
   const { createApp } = await import("../../server");
   const app = await createApp({ includeFrontend: false });
@@ -999,5 +1014,192 @@ describe("monthly summary consistency after Asaas reconciliation", () => {
     expect(refundedSummary.body?.gross_amount).toBe(200);
     expect(refundedSummary.body?.paid_amount).toBe(0);
     expect(refundedSummary.body?.outstanding_amount).toBe(200);
+  });
+});
+
+describe("AI usage metering", () => {
+  let app: Awaited<ReturnType<(typeof import("../../server"))["createApp"]>>;
+  let db: MockDb;
+
+  beforeAll(async () => {
+    const created = await createTestApp({
+      env: {
+        NODE_ENV: "development",
+        ALLOW_DEV_USER_BYPASS: "true",
+        GEMINI_API_KEY: "test-gemini-key",
+        AI_MODEL_NAME: "gemini-2.5-flash",
+        AI_TOKEN_COST_PER_MILLION: "7",
+        AI_AUDIO_COST_PER_MINUTE: "0.25",
+        AI_AUDIO_TOKENS_PER_MINUTE: "900",
+        AI_AUDIO_AVG_BITRATE_KBPS: "64",
+      },
+      seed: {
+        clinic_members: [
+          {
+            id: 1,
+            clinic_id: "clinic-1",
+            user_id: "pro-user",
+            role: "professional",
+            active: true,
+            created_at: "2026-02-01T00:00:00.000Z",
+          },
+        ],
+        patients: [
+          {
+            id: 333,
+            clinic_id: "clinic-1",
+            user_id: "pro-user",
+            name: "Paciente IA",
+          },
+        ],
+      },
+      mockGeminiResponseText:
+        '{"complaint":"Queixa principal","intervention":"Intervencao registrada","next_focus":"Proximo foco"}',
+    });
+    app = created.app;
+    db = created.db;
+  });
+
+  it("registers AI usage event when processing audio note", async () => {
+    const response = await request(app).post("/api/ai/process-audio").set("x-user-id", "pro-user").send({
+      audioBase64: Buffer.from("audio-bytes-test").toString("base64"),
+      mimeType: "audio/webm",
+      patient_id: 333,
+      preferences: {
+        tone: "clinical",
+        length: "short",
+      },
+    });
+
+    expect(response.status).toBe(200);
+    expect(response.body?.complaint).toBeTruthy();
+    expect(response.body?.usage?.model).toBe("gemini-2.5-flash");
+    expect(Number(response.body?.usage?.total_tokens_estimated || 0)).toBeGreaterThan(0);
+
+    expect(Array.isArray(db.ai_usage_events)).toBe(true);
+    expect(db.ai_usage_events.length).toBe(1);
+    expect(db.ai_usage_events[0]).toMatchObject({
+      clinic_id: "clinic-1",
+      user_id: "pro-user",
+      patient_id: 333,
+      operation: "audio_transcription",
+      provider: "google",
+      model: "gemini-2.5-flash",
+      status: "success",
+    });
+  });
+});
+
+describe("AI usage summary endpoint", () => {
+  let app: Awaited<ReturnType<(typeof import("../../server"))["createApp"]>>;
+
+  beforeAll(async () => {
+    const created = await createTestApp({
+      env: {
+        NODE_ENV: "development",
+        ALLOW_DEV_USER_BYPASS: "true",
+      },
+      seed: {
+        clinic_members: [
+          {
+            id: 1,
+            clinic_id: "clinic-1",
+            user_id: "pro-user",
+            role: "professional",
+            active: true,
+            created_at: "2026-02-01T00:00:00.000Z",
+          },
+          {
+            id: 2,
+            clinic_id: "clinic-1",
+            user_id: "sec-user",
+            role: "secretary",
+            active: true,
+            created_at: "2026-02-01T00:00:00.000Z",
+          },
+        ],
+        ai_usage_events: [
+          {
+            id: 1,
+            clinic_id: "clinic-1",
+            user_id: "pro-user",
+            operation: "audio_transcription",
+            provider: "google",
+            model: "gemini-2.5-flash",
+            status: "success",
+            input_audio_bytes: 1000,
+            input_seconds: 12.5,
+            input_tokens_estimated: 210,
+            output_tokens_estimated: 80,
+            total_tokens_estimated: 290,
+            estimated_cost: 0.0123,
+            currency: "BRL",
+            created_at: "2026-04-02T10:00:00.000Z",
+          },
+          {
+            id: 2,
+            clinic_id: "clinic-1",
+            user_id: "pro-user",
+            operation: "audio_transcription",
+            provider: "google",
+            model: "gemini-2.5-pro",
+            status: "failed",
+            input_audio_bytes: 500,
+            input_seconds: 6,
+            input_tokens_estimated: 120,
+            output_tokens_estimated: 0,
+            total_tokens_estimated: 120,
+            estimated_cost: 0.0045,
+            currency: "BRL",
+            created_at: "2026-04-08T14:00:00.000Z",
+          },
+          {
+            id: 3,
+            clinic_id: "clinic-1",
+            user_id: "pro-user",
+            operation: "audio_transcription",
+            provider: "google",
+            model: "gemini-2.5-flash",
+            status: "success",
+            input_audio_bytes: 700,
+            input_seconds: 7,
+            input_tokens_estimated: 140,
+            output_tokens_estimated: 30,
+            total_tokens_estimated: 170,
+            estimated_cost: 0.0075,
+            currency: "BRL",
+            created_at: "2026-05-01T14:00:00.000Z",
+          },
+        ],
+      },
+    });
+    app = created.app;
+  });
+
+  it("aggregates monthly usage metrics for professionals", async () => {
+    const response = await request(app)
+      .get("/api/ai/usage/summary")
+      .set("x-user-id", "pro-user")
+      .query({ month: "2026-04" });
+
+    expect(response.status).toBe(200);
+    expect(response.body?.period).toBe("2026-04");
+    expect(response.body?.totals?.requests).toBe(2);
+    expect(response.body?.totals?.success_count).toBe(1);
+    expect(response.body?.totals?.failed_count).toBe(1);
+    expect(response.body?.totals?.total_tokens_estimated).toBe(410);
+    expect(response.body?.totals?.estimated_cost).toBeCloseTo(0.0168, 6);
+    expect(Array.isArray(response.body?.by_model)).toBe(true);
+    expect(Array.isArray(response.body?.by_day)).toBe(true);
+    expect(Array.isArray(response.body?.recent)).toBe(true);
+  });
+
+  it("denies secretary role from reading AI usage summary", async () => {
+    const response = await request(app)
+      .get("/api/ai/usage/summary")
+      .set("x-user-id", "sec-user")
+      .query({ month: "2026-04" });
+
+    expect(response.status).toBe(403);
   });
 });

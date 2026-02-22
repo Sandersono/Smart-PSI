@@ -69,3 +69,57 @@ export interface FinancialRecord {
   date: string;
   status: "paid" | "pending";
 }
+
+export interface AiUsageSummaryTotals {
+  requests: number;
+  success_count: number;
+  failed_count: number;
+  input_audio_bytes: number;
+  input_seconds: number;
+  input_minutes: number;
+  input_tokens_estimated: number;
+  output_tokens_estimated: number;
+  total_tokens_estimated: number;
+  estimated_cost: number;
+}
+
+export interface AiUsageSummaryByModel {
+  model: string;
+  requests: number;
+  success_count: number;
+  failed_count: number;
+  total_tokens_estimated: number;
+  estimated_cost: number;
+}
+
+export interface AiUsageSummaryByDay {
+  day: string;
+  requests: number;
+  success_count: number;
+  failed_count: number;
+  total_tokens_estimated: number;
+  estimated_cost: number;
+}
+
+export interface AiUsageSummaryRecentItem {
+  id: number | null;
+  model: string;
+  status: "success" | "failed";
+  created_at: string | null;
+  total_tokens_estimated: number;
+  estimated_cost: number;
+}
+
+export interface AiUsageSummary {
+  period: string;
+  pricing: {
+    token_cost_per_million: number;
+    audio_cost_per_minute: number;
+    audio_tokens_per_minute: number;
+    currency: string;
+  };
+  totals: AiUsageSummaryTotals;
+  by_model: AiUsageSummaryByModel[];
+  by_day: AiUsageSummaryByDay[];
+  recent: AiUsageSummaryRecentItem[];
+}

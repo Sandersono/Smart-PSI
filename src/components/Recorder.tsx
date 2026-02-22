@@ -207,7 +207,8 @@ export const Recorder = ({
           base64data,
           blob.type || "audio/webm",
           accessToken,
-          preferences
+          preferences,
+          selectedPatientId
         );
         onComplete({ ...result, patient_id: selectedPatientId });
       } catch (error) {
