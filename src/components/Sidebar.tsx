@@ -11,6 +11,7 @@ import {
   User,
 } from "lucide-react";
 import { cn } from "../lib/utils";
+import { Brand } from "./Brand";
 
 interface SidebarProps {
   activeView: string;
@@ -30,27 +31,24 @@ export const Sidebar = ({
   role,
 }: SidebarProps) => {
   const clinicalItems = [
-    { id: "dashboard", label: "Dashboard", icon: LayoutDashboard },
-    { id: "record", label: "Nova Sessao", icon: Mic },
+    { id: "dashboard", label: "Painel", icon: LayoutDashboard },
+    { id: "record", label: "Nova Sessão", icon: Mic },
   ];
 
   const operationalItems = [
     { id: "patients", label: "Pacientes", icon: Users },
     { id: "agenda", label: "Agenda", icon: CalendarDays },
     { id: "financial", label: "Financeiro", icon: Wallet },
-    { id: "settings", label: "Configuracoes", icon: Settings },
+    { id: "settings", label: "Configurações", icon: Settings },
     { id: "help", label: "Ajuda & LGPD", icon: HelpCircle },
   ];
 
   const menuItems = role === "secretary" ? operationalItems : [...clinicalItems, ...operationalItems];
 
   return (
-    <aside className="w-64 h-screen sticky top-0 bg-[#0f2530] border-r border-slate-800 p-6 flex flex-col text-slate-100 shadow-[inset_-1px_0_0_rgba(255,255,255,0.04)]">
-      <div className="flex items-center gap-3 mb-12 px-2">
-        <div className="w-10 h-10 bg-slate-100 rounded-xl flex items-center justify-center text-[#0f2530] font-bold shadow-lg shadow-black/20">
-          S
-        </div>
-        <h1 className="text-xl font-bold text-white tracking-tight">SmartPSI</h1>
+    <aside className="w-64 h-screen sticky top-0 bg-[linear-gradient(180deg,#141414_0%,#1A1A1A_45%,#222224_100%)] border-r border-[#3A3A3C] p-6 flex flex-col text-slate-100 shadow-[inset_-1px_0_0_rgba(255,255,255,0.04)]">
+      <div className="mb-12 px-2">
+        <Brand inverse />
       </div>
 
       <nav className="flex-1 space-y-2">

@@ -1,6 +1,7 @@
 import React, { useState } from "react";
-import { LogIn, UserPlus, ShieldCheck } from "lucide-react";
+import { LogIn, UserPlus } from "lucide-react";
 import { supabase } from "../lib/supabaseClient";
+import { Brand } from "./Brand";
 
 type AuthMode = "signin" | "signup" | "forgot" | "update";
 
@@ -82,13 +83,12 @@ export const Auth = ({ initialMode = "signin", onPasswordUpdated }: AuthProps) =
   };
 
   return (
-    <div className="min-h-screen bg-[#F2F2F7] flex items-center justify-center px-4">
+    <div className="min-h-screen bg-[#F7F8FA] flex items-center justify-center px-4">
       <div className="w-full max-w-md glass-panel p-10 space-y-8">
         <div className="text-center space-y-3">
-          <div className="w-14 h-14 rounded-2xl bg-petroleum text-white flex items-center justify-center mx-auto shadow-lg shadow-petroleum/20">
-            <ShieldCheck size={28} />
+          <div className="flex justify-center">
+            <Brand />
           </div>
-          <h1 className="text-3xl font-bold tracking-tight text-petroleum">SmartPSI</h1>
           <p className="text-slate-500 text-sm">
             {mode === "signin" && "Acesse sua conta para continuar."}
             {mode === "signup" && "Crie sua conta para iniciar."}
