@@ -10,9 +10,6 @@ services:
         VITE_SENTRY_DSN: ${VITE_SENTRY_DSN:-}
     env_file:
       - ./.env.production
-    environment:
-      APP_URL: ${APP_URL:-https://${APP_DOMAIN:-localhost}}
-      CORS_ALLOWED_ORIGINS: ${CORS_ALLOWED_ORIGINS:-https://${APP_DOMAIN:-localhost}}
     restart: unless-stopped
     expose:
       - "3000"
@@ -35,9 +32,8 @@ services:
     depends_on:
       app:
         condition: service_healthy
-    environment:
-      APP_DOMAIN: ${APP_DOMAIN:-localhost}
-      CADDY_EMAIL: ${CADDY_EMAIL:-}
+    env_file:
+      - ./.env.production
     ports:
       - "80:80"
       - "443:443"
