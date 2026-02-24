@@ -298,7 +298,7 @@ export default function App() {
 
   if (!authReady) {
     return (
-      <div className="min-h-screen bg-[#F2F2F7] flex items-center justify-center text-slate-500">
+      <div className="min-h-screen bg-[#F7F8FA] flex items-center justify-center text-slate-500">
         Carregando...
       </div>
     );
@@ -320,7 +320,7 @@ export default function App() {
 
   if (loadingMe && !me) {
     return (
-      <div className="min-h-screen bg-[#F2F2F7] flex items-center justify-center text-slate-500">
+      <div className="min-h-screen bg-[#F7F8FA] flex items-center justify-center text-slate-500">
         Carregando contexto da clinica...
       </div>
     );
@@ -328,14 +328,16 @@ export default function App() {
 
   if (meError && !me) {
     return (
-      <div className="min-h-screen bg-[#F2F2F7] flex items-center justify-center p-6">
+      <div className="min-h-screen bg-[#F7F8FA] flex items-center justify-center p-6">
         <div className="glass-panel max-w-2xl p-8 space-y-4">
           <h2 className="text-2xl font-bold text-petroleum">Configuracao pendente do banco</h2>
           <p className="text-slate-600">{meError}</p>
           <p className="text-sm text-slate-500">
             Execute no Supabase SQL Editor: `supabase/migrations/20260221_002_clinic_rbac_agenda_asaas.sql`,
             `supabase/migrations/20260221_003_google_agenda_notes_source.sql` e
-            `supabase/migrations/20260221_004_financial_monthly_asaas_settings.sql`, `supabase/migrations/20260222_005_ai_usage_meter.sql`.
+            `supabase/migrations/20260221_004_financial_monthly_asaas_settings.sql`,
+            `supabase/migrations/20260222_005_ai_usage_meter.sql` e
+            `supabase/migrations/20260224_006_patient_linkage_guardrails.sql`.
           </p>
         </div>
       </div>
@@ -347,7 +349,7 @@ export default function App() {
   const canOpenRecorder = isClinicalRole;
 
   return (
-    <div className="flex min-h-screen bg-[#F2F2F7]">
+    <div className="flex min-h-screen bg-[#F7F8FA]">
       {toast && <Toast type={toast.type} message={toast.message} />}
       <Sidebar
         activeView={view === "patient_profile" ? "patients" : view}

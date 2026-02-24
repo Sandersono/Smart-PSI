@@ -3213,6 +3213,7 @@ export async function createApp(options: CreateAppOptions = {}) {
       const response = (patients ?? []).map((patient) => ({
         ...patient,
         notes: context.role === "secretary" ? null : patient.notes,
+        anamnese: context.role === "secretary" ? null : patient.anamnese,
         session_count: sessionCounts.get(Number(patient.id)) ?? 0,
       }));
 
@@ -3241,13 +3242,14 @@ export async function createApp(options: CreateAppOptions = {}) {
           name,
           email: toNullableString(req.body?.email),
           phone: toNullableString(req.body?.phone),
-            birth_date: toNullableString(req.body?.birth_date),
-            cpf: toNullableString(req.body?.cpf),
-            address: toNullableString(req.body?.address),
-            notes: context.role === "secretary" ? null : toNullableString(req.body?.notes),
-            session_fee: toNullableNumber(req.body?.session_fee) || 0,
-            billing_mode_override: normalizeBillingMode(req.body?.billing_mode_override),
-          })
+          birth_date: toNullableString(req.body?.birth_date),
+          cpf: toNullableString(req.body?.cpf),
+          address: toNullableString(req.body?.address),
+          notes: context.role === "secretary" ? null : toNullableString(req.body?.notes),
+          anamnese: context.role === "secretary" ? null : toNullableString(req.body?.anamnese),
+          session_fee: toNullableNumber(req.body?.session_fee) || 0,
+          billing_mode_override: normalizeBillingMode(req.body?.billing_mode_override),
+        })
         .select("id")
         .single();
 
@@ -3281,8 +3283,11 @@ export async function createApp(options: CreateAppOptions = {}) {
       return;
     }
 
-    if (context.role === "secretary" && req.body?.notes !== undefined) {
-      res.status(403).json({ error: "Secretary cannot update clinical notes." });
+    if (
+      context.role === "secretary" &&
+      (req.body?.notes !== undefined || req.body?.anamnese !== undefined)
+    ) {
+      res.status(403).json({ error: "Secretary cannot update clinical records." });
       return;
     }
 
@@ -3298,6 +3303,8 @@ export async function createApp(options: CreateAppOptions = {}) {
           address: toNullableString(req.body?.address),
           notes:
             context.role === "secretary" ? undefined : toNullableString(req.body?.notes),
+          anamnese:
+            context.role === "secretary" ? undefined : toNullableString(req.body?.anamnese),
           session_fee: toNullableNumber(req.body?.session_fee) || 0,
           billing_mode_override: normalizeBillingMode(req.body?.billing_mode_override),
         })
@@ -3328,6 +3335,40 @@ export async function createApp(options: CreateAppOptions = {}) {
     }
 
     try {
+      const [
+        { count: notesCount, error: notesCountError },
+        { count: appointmentsCount, error: appointmentsCountError },
+        { count: financialCount, error: financialCountError },
+      ] = await Promise.all([
+        supabase
+          .from("notes")
+          .select("id", { count: "exact", head: true })
+          .eq("clinic_id", context.clinicId)
+          .eq("patient_id", patientId),
+        supabase
+          .from("appointments")
+          .select("id", { count: "exact", head: true })
+          .eq("clinic_id", context.clinicId)
+          .or(`patient_id.eq.${patientId},secondary_patient_id.eq.${patientId}`),
+        supabase
+          .from("financial_records")
+          .select("id", { count: "exact", head: true })
+          .eq("clinic_id", context.clinicId)
+          .eq("patient_id", patientId),
+      ]);
+
+      if (notesCountError) throw notesCountError;
+      if (appointmentsCountError) throw appointmentsCountError;
+      if (financialCountError) throw financialCountError;
+
+      if ((notesCount || 0) > 0 || (appointmentsCount || 0) > 0 || (financialCount || 0) > 0) {
+        res.status(409).json({
+          error:
+            "Paciente possui registros vinculados (sessoes, prontuarios ou financeiro) e nao pode ser excluido.",
+        });
+        return;
+      }
+
       const { error } = await supabase
         .from("patients")
         .delete()
@@ -4278,11 +4319,13 @@ export async function createApp(options: CreateAppOptions = {}) {
 
     const parsedDate = toDateTimeOrNull(req.body?.date);
     const patientId = toNullableNumber(req.body?.patient_id);
+    if (patientId === null) {
+      res.status(400).json({ error: "patient_id is required for financial records" });
+      return;
+    }
 
     try {
-      if (patientId !== null) {
-        await ensurePatientBelongsClinic(context.clinicId, patientId);
-      }
+      await ensurePatientBelongsClinic(context.clinicId, patientId);
 
       const { data, error } = await supabase
         .from("financial_records")
@@ -4341,11 +4384,13 @@ export async function createApp(options: CreateAppOptions = {}) {
 
     const parsedDate = toDateTimeOrNull(req.body?.date);
     const patientId = toNullableNumber(req.body?.patient_id);
+    if (patientId === null) {
+      res.status(400).json({ error: "patient_id is required for financial records" });
+      return;
+    }
 
     try {
-      if (patientId !== null) {
-        await ensurePatientBelongsClinic(context.clinicId, patientId);
-      }
+      await ensurePatientBelongsClinic(context.clinicId, patientId);
 
       const { data, error } = await supabase
         .from("financial_records")
@@ -4514,9 +4559,9 @@ export async function createApp(options: CreateAppOptions = {}) {
     const status = toNullableString(req.body?.status) === "final" ? "final" : "draft";
     const source = normalizeNoteSource(req.body?.source);
 
-    if (source === "quick" && patientId === null) {
+    if (patientId === null) {
       res.status(400).json({
-        error: "Quick notes require patient_id to save in patient history.",
+        error: "patient_id is required for clinical notes.",
       });
       return;
     }
@@ -4532,9 +4577,7 @@ export async function createApp(options: CreateAppOptions = {}) {
     }
 
     try {
-      if (patientId !== null) {
-        await ensurePatientBelongsClinic(context.clinicId, patientId);
-      }
+      await ensurePatientBelongsClinic(context.clinicId, patientId);
 
       const { data, error } = await supabase
         .from("notes")
@@ -4576,6 +4619,11 @@ export async function createApp(options: CreateAppOptions = {}) {
       return;
     }
 
+    if (patientId === null) {
+      res.status(400).json({ error: "patient_id is required for clinical notes." });
+      return;
+    }
+
     if (
       status === "final" &&
       !validateFinalNotePayload(patientId, complaint, intervention, nextFocus)
@@ -4604,16 +4652,7 @@ export async function createApp(options: CreateAppOptions = {}) {
           ? normalizeNoteSource(req.body?.source)
           : normalizeNoteSource(currentNote.source);
 
-      if (source === "quick" && patientId === null) {
-        res.status(400).json({
-          error: "Quick notes require patient_id to save in patient history.",
-        });
-        return;
-      }
-
-      if (patientId !== null) {
-        await ensurePatientBelongsClinic(context.clinicId, patientId);
-      }
+      await ensurePatientBelongsClinic(context.clinicId, patientId);
 
       const { data, error } = await supabase
         .from("notes")

@@ -14,6 +14,7 @@ export interface Patient {
   birth_date: string | null;
   cpf: string | null;
   address: string | null;
+  anamnese?: string | null;
   notes: string | null;
   created_at: string;
   session_fee: number | null;
