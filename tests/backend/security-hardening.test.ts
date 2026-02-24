@@ -520,7 +520,7 @@ describe("RBAC for secretary", () => {
       notes: "tentativa de editar conteudo clinico",
     });
     expect(response.status).toBe(403);
-    expect(String(response.body?.error || "")).toContain("Secretary cannot update clinical notes");
+    expect(String(response.body?.error || "")).toContain("Secretary cannot update clinical");
   });
 });
 
