@@ -241,7 +241,7 @@ export const Recorder = ({
         <div className="space-y-3">
           <h2 className="text-4xl font-bold tracking-tight text-petroleum">Nova sessao</h2>
           <p className="text-slate-500 text-lg">
-            Grave o audio da sessao para gerar a nota clinica automaticamente.
+            Grave o audio da sessao para gerar o prontuario automaticamente.
           </p>
         </div>
 
@@ -351,7 +351,7 @@ export const Recorder = ({
             <div className="flex justify-between items-end">
               <div className="text-left">
                 <p className="text-lg font-bold text-petroleum">
-                  {status === "uploading" ? "Enviando audio..." : "Gerando nota clinica..."}
+                  {status === "uploading" ? "Enviando audio..." : "Gerando prontuario..."}
                 </p>
                 <p className="text-sm text-slate-400">Isso pode levar ate 2 minutos.</p>
               </div>
@@ -361,7 +361,7 @@ export const Recorder = ({
               <motion.div
                 initial={{ width: 0 }}
                 animate={{ width: status === "uploading" ? "40%" : "90%" }}
-                className="h-full bg-petroleum rounded-full shadow-[0_0_10px_rgba(11,91,110,0.3)]"
+                className="h-full bg-petroleum rounded-full shadow-[0_0_10px_rgba(74,144,226,0.35)]"
               />
             </div>
             <div className="flex items-center justify-center gap-2 text-xs text-slate-400 font-medium">

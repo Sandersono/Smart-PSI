@@ -89,6 +89,7 @@ type Feedback = { type: "success" | "error"; message: string } | null;
 type DayEntry =
   | { kind: "appointment"; start_time: string; appointment: Appointment }
   | { kind: "block"; start_time: string; block: CalendarBlock };
+type AgendaViewMode = "day" | "week" | "month";
 
 const emptyForm: AppointmentForm = {
   provider_user_id: "",
@@ -134,6 +135,34 @@ function getErrorMessage(error: unknown, fallback: string) {
   return fallback;
 }
 
+function atStartOfDay(date: Date) {
+  const d = new Date(date);
+  d.setHours(0, 0, 0, 0);
+  return d;
+}
+
+function atEndOfDay(date: Date) {
+  const d = new Date(date);
+  d.setHours(23, 59, 59, 999);
+  return d;
+}
+
+function getWeekStartMonday(date: Date) {
+  const d = atStartOfDay(date);
+  const day = d.getDay();
+  const diff = day === 0 ? -6 : 1 - day;
+  d.setDate(d.getDate() + diff);
+  return d;
+}
+
+function shiftDateByMode(baseDate: Date, mode: AgendaViewMode, amount: number) {
+  const next = new Date(baseDate);
+  if (mode === "day") next.setDate(next.getDate() + amount);
+  if (mode === "week") next.setDate(next.getDate() + amount * 7);
+  if (mode === "month") next.setMonth(next.getMonth() + amount);
+  return next;
+}
+
 export const Agenda = ({ accessToken, onStartSession }: AgendaProps) => {
   const [appointments, setAppointments] = useState<Appointment[]>([]);
   const [blocks, setBlocks] = useState<CalendarBlock[]>([]);
@@ -143,6 +172,7 @@ export const Agenda = ({ accessToken, onStartSession }: AgendaProps) => {
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [editingAppointment, setEditingAppointment] = useState<Appointment | null>(null);
   const [selectedDate, setSelectedDate] = useState(new Date());
+  const [viewMode, setViewMode] = useState<AgendaViewMode>("week");
   const [providerFilter, setProviderFilter] = useState<string>("all");
   const [form, setForm] = useState<AppointmentForm>(emptyForm);
   const [isLoading, setIsLoading] = useState(false);
@@ -459,44 +489,58 @@ export const Agenda = ({ accessToken, onStartSession }: AgendaProps) => {
     return items;
   }, [selectedDate]);
 
-  const dayAppointments = useMemo(
+  const periodRange = useMemo(() => {
+    if (viewMode === "day") {
+      return {
+        start: atStartOfDay(selectedDate),
+        end: atEndOfDay(selectedDate),
+      };
+    }
+
+    if (viewMode === "week") {
+      const start = getWeekStartMonday(selectedDate);
+      const end = new Date(start);
+      end.setDate(end.getDate() + 6);
+      return { start, end: atEndOfDay(end) };
+    }
+
+    const start = new Date(selectedDate.getFullYear(), selectedDate.getMonth(), 1);
+    const end = new Date(selectedDate.getFullYear(), selectedDate.getMonth() + 1, 0);
+    return { start, end: atEndOfDay(end) };
+  }, [selectedDate, viewMode]);
+
+  const filteredAppointments = useMemo(
     () =>
       appointments
         .filter((a) => {
           const d = new Date(a.start_time);
-          const sameDay =
-            d.getDate() === selectedDate.getDate() &&
-            d.getMonth() === selectedDate.getMonth() &&
-            d.getFullYear() === selectedDate.getFullYear();
-          if (!sameDay) return false;
+          const inRange = d >= periodRange.start && d <= periodRange.end;
+          if (!inRange) return false;
           if (providerFilter === "all") return true;
           return String(a.provider_user_id || "") === providerFilter;
         })
         .sort((a, b) => new Date(a.start_time).getTime() - new Date(b.start_time).getTime()),
-    [appointments, selectedDate, providerFilter]
+    [appointments, periodRange, providerFilter]
   );
 
-  const dayBlocks = useMemo(
+  const filteredBlocks = useMemo(
     () =>
       blocks
         .filter((block) => {
           const d = new Date(block.start_time);
-          const sameDay =
-            d.getDate() === selectedDate.getDate() &&
-            d.getMonth() === selectedDate.getMonth() &&
-            d.getFullYear() === selectedDate.getFullYear();
-          if (!sameDay) return false;
+          const inRange = d >= periodRange.start && d <= periodRange.end;
+          if (!inRange) return false;
           if (providerFilter === "all") return true;
           return String(block.provider_user_id) === providerFilter;
         })
         .sort((a, b) => new Date(a.start_time).getTime() - new Date(b.start_time).getTime()),
-    [blocks, selectedDate, providerFilter]
+    [blocks, periodRange, providerFilter]
   );
 
-  const dayEntries = useMemo(
+  const periodEntries = useMemo(
     () =>
       [
-        ...dayAppointments.map(
+        ...filteredAppointments.map(
           (appointment) =>
             ({
               kind: "appointment",
@@ -504,7 +548,7 @@ export const Agenda = ({ accessToken, onStartSession }: AgendaProps) => {
               appointment,
             }) as DayEntry
         ),
-        ...dayBlocks.map(
+        ...filteredBlocks.map(
           (block) =>
             ({
               kind: "block",
@@ -513,8 +557,31 @@ export const Agenda = ({ accessToken, onStartSession }: AgendaProps) => {
             }) as DayEntry
         ),
       ].sort((a, b) => new Date(a.start_time).getTime() - new Date(b.start_time).getTime()),
-    [dayAppointments, dayBlocks]
+    [filteredAppointments, filteredBlocks]
   );
+
+  const periodLabel = useMemo(() => {
+    if (viewMode === "day") {
+      return selectedDate.toLocaleDateString("pt-BR", {
+        weekday: "long",
+        day: "2-digit",
+        month: "long",
+        year: "numeric",
+      });
+    }
+
+    if (viewMode === "week") {
+      const start = getWeekStartMonday(selectedDate);
+      const end = new Date(start);
+      end.setDate(end.getDate() + 6);
+      return `${start.toLocaleDateString("pt-BR", { day: "2-digit", month: "2-digit" })} - ${end.toLocaleDateString("pt-BR", { day: "2-digit", month: "2-digit", year: "numeric" })}`;
+    }
+
+    return selectedDate
+      .toLocaleDateString("pt-BR", { month: "long", year: "numeric" })
+      .replace(/^\w/, (c) => c.toUpperCase());
+  }, [selectedDate, viewMode]);
+
   const canManageBlocks = me?.role === "admin" || me?.role === "professional";
 
   return (
@@ -536,7 +603,7 @@ export const Agenda = ({ accessToken, onStartSession }: AgendaProps) => {
         <div>
           <h2 className="text-3xl font-bold tracking-tight">Agenda</h2>
           <p className="text-slate-500">
-            {dayAppointments.length} sessoes e {dayBlocks.length} bloqueios no dia
+            {filteredAppointments.length} sessoes e {filteredBlocks.length} bloqueios no periodo
           </p>
         </div>
         <button
@@ -549,6 +616,24 @@ export const Agenda = ({ accessToken, onStartSession }: AgendaProps) => {
       </header>
 
       <div className="flex flex-wrap gap-3">
+        <div className="inline-flex rounded-xl border border-black/10 bg-white/60 p-1">
+          {[
+            { id: "day", label: "Dia" },
+            { id: "week", label: "Semana" },
+            { id: "month", label: "Mês" },
+          ].map((mode) => (
+            <button
+              key={mode.id}
+              onClick={() => setViewMode(mode.id as AgendaViewMode)}
+              className={cn(
+                "px-4 py-2 rounded-lg text-sm font-semibold transition-all",
+                viewMode === mode.id ? "bg-petroleum text-white shadow-sm" : "text-slate-600 hover:bg-white"
+              )}
+            >
+              {mode.label}
+            </button>
+          ))}
+        </div>
         <select
           value={providerFilter}
           onChange={(e) => setProviderFilter(e.target.value)}
@@ -568,22 +653,14 @@ export const Agenda = ({ accessToken, onStartSession }: AgendaProps) => {
         <div className="lg:col-span-4 glass-panel p-6 space-y-4">
           <div className="flex items-center justify-between">
             <button
-              onClick={() =>
-                setSelectedDate(new Date(selectedDate.getFullYear(), selectedDate.getMonth() - 1, 1))
-              }
+              onClick={() => setSelectedDate(shiftDateByMode(selectedDate, viewMode, -1))}
               className="p-2 hover:bg-slate-100 rounded-lg"
             >
               <ChevronLeft size={20} className="text-slate-400" />
             </button>
-            <h3 className="font-bold text-slate-700">
-              {selectedDate
-                .toLocaleDateString("pt-BR", { month: "long", year: "numeric" })
-                .replace(/^\w/, (c) => c.toUpperCase())}
-            </h3>
+            <h3 className="font-bold text-slate-700">{periodLabel}</h3>
             <button
-              onClick={() =>
-                setSelectedDate(new Date(selectedDate.getFullYear(), selectedDate.getMonth() + 1, 1))
-              }
+              onClick={() => setSelectedDate(shiftDateByMode(selectedDate, viewMode, 1))}
               className="p-2 hover:bg-slate-100 rounded-lg"
             >
               <ChevronRight size={20} className="text-slate-400" />
@@ -620,10 +697,12 @@ export const Agenda = ({ accessToken, onStartSession }: AgendaProps) => {
         <div className="lg:col-span-8 space-y-4">
           {isLoading ? (
             <div className="glass-panel p-10 text-center text-slate-500">Carregando agenda...</div>
-          ) : dayEntries.length === 0 ? (
-            <div className="glass-panel p-10 text-center text-slate-500">Nenhum agendamento no dia.</div>
+          ) : periodEntries.length === 0 ? (
+            <div className="glass-panel p-10 text-center text-slate-500">
+              Nenhum agendamento no periodo selecionado.
+            </div>
           ) : (
-            dayEntries.map((entry) => {
+            periodEntries.map((entry) => {
               if (entry.kind === "block") {
                 const block = entry.block;
                 const start = new Date(block.start_time);

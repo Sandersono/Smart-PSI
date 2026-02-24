@@ -62,7 +62,7 @@ export const NoteEditor = ({
 
     doc.setFontSize(22);
     doc.setTextColor(11, 91, 110);
-    doc.text("Nota Clinica - SmartPSI", 20, 25);
+    doc.text("Prontuario Clinico - SmartPSI", 20, 25);
 
     doc.setFontSize(10);
     doc.setTextColor(100);
@@ -176,7 +176,7 @@ export const NoteEditor = ({
               className="bg-success text-white px-6 py-2.5 rounded-xl font-semibold shadow-lg shadow-success/20 flex items-center gap-2 hover:scale-105 active:scale-95 transition-all disabled:opacity-60 disabled:cursor-not-allowed disabled:hover:scale-100"
             >
               <CheckCircle2 size={18} />
-              {isSaving ? "Finalizando..." : "Finalizar Nota"}
+              {isSaving ? "Finalizando..." : "Finalizar Prontuario"}
             </button>
           )}
         </div>

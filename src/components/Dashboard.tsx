@@ -251,7 +251,7 @@ export const Dashboard = ({
               ))}
 
               {filteredNotes.length === 0 && (
-                <div className="py-12 text-center text-slate-400">Nenhuma nota para este filtro.</div>
+                <div className="py-12 text-center text-slate-400">Nenhum prontuario para este filtro.</div>
               )}
             </div>
 
@@ -259,7 +259,7 @@ export const Dashboard = ({
               onClick={() => setFilter("all")}
               className="w-full mt-8 py-3 text-sm font-bold text-petroleum hover:bg-petroleum/5 rounded-xl transition-all flex items-center justify-center gap-2"
             >
-              Ver todas as notas <ChevronRight size={16} />
+              Ver todos os prontuarios <ChevronRight size={16} />
             </button>
           </div>
 
@@ -295,7 +295,7 @@ export const Dashboard = ({
             </h3>
             <div className="space-y-4">
               <StatusRow label="Servico de transcricao" />
-              <StatusRow label="Geracao de notas (LLM)" />
+              <StatusRow label="Geracao de prontuarios (LLM)" />
               <StatusRow label="Seguranca de dados" />
             </div>
           </div>

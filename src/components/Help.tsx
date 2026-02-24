@@ -11,10 +11,10 @@ export const Help = () => {
   const faqs = [
     {
       q: "O SmartPSI armazena o audio das sessoes?",
-      a: "Nao. O audio e processado e descartado apos a geracao da nota clinica.",
+      a: "Nao. O audio e processado e descartado apos a geracao do prontuario.",
     },
     {
-      q: "A IA pode cometer erros na nota?",
+      q: "A IA pode cometer erros no prontuario?",
       a: "Sim. Sempre revise e valide o conteudo antes de concluir o prontuario.",
     },
     {
