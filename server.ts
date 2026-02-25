@@ -655,6 +655,26 @@ function parseBillingProvider(value: unknown): BillingProvider | null {
   return null;
 }
 
+function normalizeEmail(value: unknown) {
+  const raw = toNullableString(value);
+  if (!raw) return null;
+  const normalized = raw.toLowerCase();
+  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(normalized)) return null;
+  return normalized;
+}
+
+function generateTemporaryPassword(length = 16) {
+  const min = Math.max(12, Math.trunc(length));
+  const alphabet =
+    "ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz23456789!@#$%*+-_";
+  const bytes = crypto.randomBytes(min);
+  let output = "";
+  for (let idx = 0; idx < min; idx += 1) {
+    output += alphabet[bytes[idx] % alphabet.length];
+  }
+  return output;
+}
+
 function parseEvolutionConnectionStatus(value: unknown): EvolutionConnectionStatus | null {
   const raw = toNullableString(value);
   if (raw === "connected" || raw === "disconnected" || raw === "error") return raw;
@@ -3113,6 +3133,30 @@ const defaultSuperadminFeatureKeys = [
   "ai.assistant",
 ];
 
+type AdminAuthUser = {
+  id: string;
+  email?: string | null;
+  user_metadata?: Record<string, unknown>;
+};
+
+async function findAuthUserByEmail(email: string): Promise<AdminAuthUser | null> {
+  const normalizedEmail = email.toLowerCase();
+  const perPage = 1000;
+  let page = 1;
+
+  while (page <= 20) {
+    const { data, error } = await supabase.auth.admin.listUsers({ page, perPage });
+    if (error) throw error;
+    const users = (data?.users || []) as Array<AdminAuthUser>;
+    const found = users.find((item) => String(item.email || "").toLowerCase() === normalizedEmail);
+    if (found) return found;
+    if (users.length < perPage) break;
+    page += 1;
+  }
+
+  return null;
+}
+
 function normalizeFeatureKey(value: unknown) {
   const raw = toNullableString(value);
   if (!raw) return null;
@@ -3626,6 +3670,202 @@ export async function createApp(options: CreateAppOptions = {}) {
         return;
       }
       handleRouteError(res, error, "GET /api/superadmin/clinics");
+    }
+  });
+
+  app.post("/api/superadmin/clinics", async (req, res) => {
+    const context = await requireSuperadminContext(req, res);
+    if (!context) return;
+
+    const clinicName = toNullableString(req.body?.name || req.body?.clinic_name);
+    if (!clinicName) {
+      res.status(400).json({ error: "name e obrigatorio." });
+      return;
+    }
+
+    const ownerUserId = toUuidOrNull(req.body?.owner_user_id);
+    const ownerEmail = normalizeEmail(req.body?.owner_email);
+    const ownerFullName = toNullableString(req.body?.owner_full_name);
+    const createOwnerIfMissing =
+      req.body?.create_owner_if_missing === undefined
+        ? true
+        : toBoolean(req.body?.create_owner_if_missing);
+    const ownerPasswordInput = toNullableString(req.body?.owner_password);
+
+    if (!ownerUserId && !ownerEmail) {
+      res
+        .status(400)
+        .json({ error: "Informe owner_user_id ou owner_email para cadastrar a clinica." });
+      return;
+    }
+
+    try {
+      let owner: AdminAuthUser | null = null;
+      let ownerCreated = false;
+      let temporaryPassword: string | null = null;
+
+      if (ownerUserId) {
+        const { data, error } = await supabase.auth.admin.getUserById(ownerUserId);
+        if (error) throw error;
+        if (!data?.user) {
+          res.status(404).json({ error: "owner_user_id nao encontrado no Auth." });
+          return;
+        }
+        owner = data.user as AdminAuthUser;
+      } else if (ownerEmail) {
+        owner = await findAuthUserByEmail(ownerEmail);
+        if (!owner && createOwnerIfMissing) {
+          temporaryPassword = ownerPasswordInput || generateTemporaryPassword();
+          const { data, error } = await supabase.auth.admin.createUser({
+            email: ownerEmail,
+            password: temporaryPassword,
+            email_confirm: true,
+            user_metadata: ownerFullName ? { full_name: ownerFullName } : undefined,
+          });
+          if (error) throw error;
+          owner = (data?.user || null) as AdminAuthUser | null;
+          ownerCreated = Boolean(owner);
+        }
+      }
+
+      if (!owner?.id) {
+        res
+          .status(404)
+          .json({ error: "Owner nao encontrado. Informe email existente ou habilite create_owner_if_missing." });
+        return;
+      }
+
+      const incomingStatus =
+        req.body?.status === undefined ? undefined : parseTenantStatus(req.body?.status);
+      if (req.body?.status !== undefined && !incomingStatus) {
+        res.status(400).json({
+          error: "status deve ser trialing, active, past_due, suspended ou cancelled.",
+        });
+        return;
+      }
+
+      const incomingProvider =
+        req.body?.billing_provider === undefined
+          ? undefined
+          : parseBillingProvider(req.body?.billing_provider);
+      if (req.body?.billing_provider !== undefined && !incomingProvider) {
+        res.status(400).json({ error: "billing_provider deve ser manual ou asaas." });
+        return;
+      }
+
+      const planCode = toNullableString(req.body?.plan_code) || "starter";
+      const status = incomingStatus || "active";
+      const billingProvider = incomingProvider || "manual";
+      const nowIso = new Date().toISOString();
+
+      const { data: clinic, error: clinicError } = await supabase
+        .from("clinics")
+        .insert({
+          name: clinicName,
+          owner_user_id: owner.id,
+        })
+        .select("id, name, owner_user_id, created_at")
+        .single();
+      if (clinicError) throw clinicError;
+
+      const clinicId = String(clinic.id);
+
+      const { error: memberError } = await supabase.from("clinic_members").upsert(
+        {
+          clinic_id: clinicId,
+          user_id: owner.id,
+          role: "admin",
+          active: true,
+        },
+        { onConflict: "clinic_id,user_id" }
+      );
+      if (memberError) throw memberError;
+
+      const { data: subscription, error: subscriptionError } = await supabase
+        .from("tenant_subscriptions")
+        .upsert(
+          {
+            clinic_id: clinicId,
+            plan_code: planCode,
+            status,
+            billing_provider: billingProvider,
+            updated_at: nowIso,
+          },
+          { onConflict: "clinic_id" }
+        )
+        .select(
+          "clinic_id, plan_code, status, billing_provider, asaas_customer_id, asaas_subscription_id, trial_ends_at, current_period_start, current_period_end, payment_grace_until, next_charge_at, blocked_at, suspended_reason, updated_at"
+        )
+        .single();
+      if (subscriptionError) throw subscriptionError;
+
+      const enabledFeatureKeys = Array.isArray(req.body?.enabled_features)
+        ? Array.from(
+            new Set(
+              req.body.enabled_features
+                .map((item: unknown) => normalizeFeatureKey(item))
+                .filter((item: string | null): item is string => Boolean(item))
+            )
+          )
+        : [];
+
+      if (enabledFeatureKeys.length > 0) {
+        const rows = enabledFeatureKeys.map((featureKey) => ({
+          clinic_id: clinicId,
+          feature_key: featureKey,
+          enabled: true,
+          config: {},
+          updated_at: nowIso,
+        }));
+        const { error: flagsError } = await supabase
+          .from("tenant_feature_flags")
+          .upsert(rows, { onConflict: "clinic_id,feature_key" });
+        if (flagsError) throw flagsError;
+      }
+
+      await registerPlatformAuditLog({
+        actorUserId: context.userId,
+        actorType: "superadmin",
+        action: "tenant.clinic.created",
+        targetType: "clinic",
+        targetId: clinicId,
+        clinicId,
+        metadata: {
+          clinic_name: clinicName,
+          owner_user_id: owner.id,
+          owner_email: toNullableString(owner.email) || ownerEmail,
+          owner_created: ownerCreated,
+          plan_code: planCode,
+          status,
+          billing_provider: billingProvider,
+          enabled_feature_keys: enabledFeatureKeys,
+        },
+      });
+
+      res.status(201).json({
+        clinic: {
+          id: clinicId,
+          name: String(clinic.name || ""),
+          owner_user_id: String(clinic.owner_user_id || ""),
+          created_at: String(clinic.created_at || nowIso),
+        },
+        owner: {
+          user_id: owner.id,
+          email: toNullableString(owner.email) || ownerEmail,
+          full_name: ownerFullName || toNullableString(owner.user_metadata?.full_name),
+          created: ownerCreated,
+          temporary_password: ownerCreated ? temporaryPassword : null,
+        },
+        subscription: subscriptionToResponse(subscription as TenantSubscriptionRow),
+      });
+    } catch (error) {
+      try {
+        throwIfSuperadminSchemaMissing(error);
+      } catch (mappedError) {
+        handleRouteError(res, mappedError, "POST /api/superadmin/clinics");
+        return;
+      }
+      handleRouteError(res, error, "POST /api/superadmin/clinics");
     }
   });
 

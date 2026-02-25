@@ -3,7 +3,9 @@ import React, { useEffect, useMemo, useRef, useState } from "react";
 import { Session } from "@supabase/supabase-js";
 import {
   AlertTriangle,
+  BookOpenText,
   Building2,
+  CirclePlus,
   History,
   Loader2,
   LogOut,
@@ -131,6 +133,40 @@ type SubscriptionFormState = {
   suspended_reason: string;
 };
 
+type CreateClinicFormState = {
+  name: string;
+  owner_email: string;
+  owner_full_name: string;
+  owner_password: string;
+  plan_code: string;
+  status: TenantStatus;
+  billing_provider: BillingProvider;
+};
+
+type CreateClinicResponse = {
+  clinic: {
+    id: string;
+    name: string;
+    owner_user_id: string;
+    created_at: string;
+  };
+  owner: {
+    user_id: string;
+    email: string | null;
+    full_name: string | null;
+    created: boolean;
+    temporary_password: string | null;
+  };
+  subscription: ClinicItem["subscription"];
+};
+
+type CreateClinicFlash = {
+  clinic_name: string;
+  owner_email: string | null;
+  owner_created: boolean;
+  temporary_password: string | null;
+};
+
 const statusLabels: Record<TenantStatus, string> = {
   trialing: "Teste",
   active: "Ativa",
@@ -147,6 +183,7 @@ const featureLabels: Record<string, string> = {
   "crm.pipeline_automation": "Automacoes por labels",
   "ai.assistant": "Assistente IA",
 };
+const defaultCreateClinicFeatures = Object.keys(featureLabels);
 
 function toDateInput(value: string | null | undefined) {
   if (!value) return "";
@@ -176,6 +213,18 @@ function emptySubscriptionForm(): SubscriptionFormState {
   };
 }
 
+function emptyCreateClinicForm(): CreateClinicFormState {
+  return {
+    name: "",
+    owner_email: "",
+    owner_full_name: "",
+    owner_password: "",
+    plan_code: "starter",
+    status: "active",
+    billing_provider: "manual",
+  };
+}
+
 export const SuperAdminApp = () => {
   const [session, setSession] = useState<Session | null>(null);
   const [authReady, setAuthReady] = useState(false);
@@ -190,13 +239,21 @@ export const SuperAdminApp = () => {
   const [loadingFeatures, setLoadingFeatures] = useState(false);
   const [savingSubscription, setSavingSubscription] = useState(false);
   const [syncingAsaas, setSyncingAsaas] = useState(false);
+  const [creatingClinic, setCreatingClinic] = useState(false);
   const [savingFeatureKey, setSavingFeatureKey] = useState<string | null>(null);
   const [portalError, setPortalError] = useState<string | null>(null);
+  const [createClinicFlash, setCreateClinicFlash] = useState<CreateClinicFlash | null>(null);
   const [toast, setToast] = useState<{ type: "success" | "error" | "info"; message: string } | null>(
     null
   );
   const [subscriptionForm, setSubscriptionForm] = useState<SubscriptionFormState>(
     emptySubscriptionForm()
+  );
+  const [createClinicForm, setCreateClinicForm] = useState<CreateClinicFormState>(
+    emptyCreateClinicForm()
+  );
+  const [createClinicFeatures, setCreateClinicFeatures] = useState<string[]>(
+    [...defaultCreateClinicFeatures]
   );
   const authExpireInFlightRef = useRef(false);
 
@@ -266,10 +323,10 @@ export const SuperAdminApp = () => {
     setOverview(data);
   };
 
-  const loadClinics = async (token = accessToken) => {
+  const loadClinics = async (token = accessToken, searchTerm = query) => {
     const path =
-      query.trim().length > 0
-        ? `/api/superadmin/clinics?q=${encodeURIComponent(query.trim())}`
+      searchTerm.trim().length > 0
+        ? `/api/superadmin/clinics?q=${encodeURIComponent(searchTerm.trim())}`
         : "/api/superadmin/clinics";
     const data = await apiRequest<ClinicsPayload>(path, token);
     const clinicList = data.clinics || [];
@@ -475,6 +532,70 @@ export const SuperAdminApp = () => {
     }
   };
 
+  const toggleCreateClinicFeature = (featureKey: string) => {
+    setCreateClinicFeatures((current) => {
+      if (current.includes(featureKey)) {
+        return current.filter((item) => item !== featureKey);
+      }
+      return [...current, featureKey];
+    });
+  };
+
+  const handleCreateClinic = async (event: React.FormEvent) => {
+    event.preventDefault();
+    if (!accessToken) return;
+
+    const name = createClinicForm.name.trim();
+    const ownerEmail = createClinicForm.owner_email.trim();
+    if (!name) {
+      setToast({ type: "error", message: "Informe o nome da empresa/clinica." });
+      return;
+    }
+    if (!ownerEmail) {
+      setToast({ type: "error", message: "Informe o email do responsavel." });
+      return;
+    }
+
+    setCreatingClinic(true);
+    try {
+      const response = await apiRequest<CreateClinicResponse>("/api/superadmin/clinics", accessToken, {
+        method: "POST",
+        body: JSON.stringify({
+          name,
+          owner_email: ownerEmail,
+          owner_full_name: createClinicForm.owner_full_name.trim() || null,
+          owner_password: createClinicForm.owner_password.trim() || null,
+          create_owner_if_missing: true,
+          plan_code: createClinicForm.plan_code.trim() || "starter",
+          status: createClinicForm.status,
+          billing_provider: createClinicForm.billing_provider,
+          enabled_features: createClinicFeatures,
+        }),
+      });
+
+      setCreateClinicFlash({
+        clinic_name: response.clinic.name,
+        owner_email: response.owner.email,
+        owner_created: response.owner.created,
+        temporary_password: response.owner.temporary_password,
+      });
+      setCreateClinicForm(emptyCreateClinicForm());
+      setCreateClinicFeatures([...defaultCreateClinicFeatures]);
+      setQuery("");
+
+      await Promise.all([loadOverview(), loadClinics(accessToken, ""), loadAudit()]);
+      setSelectedClinicId(response.clinic.id);
+      await loadFeatures(accessToken, response.clinic.id);
+      setToast({ type: "success", message: "Empresa cadastrada com sucesso." });
+    } catch (error) {
+      console.error("Failed to create clinic", error);
+      const message = error instanceof ApiError ? error.message : "Falha ao cadastrar empresa.";
+      setToast({ type: "error", message });
+    } finally {
+      setCreatingClinic(false);
+    }
+  };
+
   const handleSignOut = async () => {
     await supabase.auth.signOut();
     setSession(null);
@@ -565,73 +686,238 @@ export const SuperAdminApp = () => {
       </header>
 
       <main className="max-w-[1600px] mx-auto p-6 grid grid-cols-1 xl:grid-cols-[360px_1fr] gap-6">
-        <section className="glass-panel p-5 h-fit space-y-4">
-          <div className="flex items-center gap-2 text-petroleum font-bold uppercase text-xs tracking-wider">
-            <Building2 size={16} /> Clinicas
-          </div>
-          <div className="relative">
-            <Search size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
-            <input
-              value={query}
-              onChange={(event) => setQuery(event.target.value)}
-              onKeyDown={(event) => {
-                if (event.key === "Enter") {
-                  event.preventDefault();
-                  loadClinics();
+        <section className="space-y-6">
+          <form onSubmit={handleCreateClinic} className="glass-panel p-5 h-fit space-y-4">
+            <div className="flex items-center gap-2 text-petroleum font-bold uppercase text-xs tracking-wider">
+              <CirclePlus size={16} /> Cadastrar empresa
+            </div>
+            <label className="text-sm space-y-1 block">
+              <span className="text-slate-600">Nome da empresa/clinica</span>
+              <input
+                value={createClinicForm.name}
+                onChange={(event) =>
+                  setCreateClinicForm((prev) => ({ ...prev, name: event.target.value }))
                 }
-              }}
-              placeholder="Buscar por clinica ou responsavel"
-              className="apple-input w-full pl-10"
-            />
-          </div>
+                className="apple-input w-full"
+                placeholder="Ex.: Clinica SmartPSI Centro"
+              />
+            </label>
+            <label className="text-sm space-y-1 block">
+              <span className="text-slate-600">Email do responsavel (conta principal)</span>
+              <input
+                type="email"
+                value={createClinicForm.owner_email}
+                onChange={(event) =>
+                  setCreateClinicForm((prev) => ({ ...prev, owner_email: event.target.value }))
+                }
+                className="apple-input w-full"
+                placeholder="responsavel@empresa.com"
+              />
+            </label>
+            <label className="text-sm space-y-1 block">
+              <span className="text-slate-600">Nome completo do responsavel (opcional)</span>
+              <input
+                value={createClinicForm.owner_full_name}
+                onChange={(event) =>
+                  setCreateClinicForm((prev) => ({ ...prev, owner_full_name: event.target.value }))
+                }
+                className="apple-input w-full"
+                placeholder="Nome do admin da empresa"
+              />
+            </label>
+            <label className="text-sm space-y-1 block">
+              <span className="text-slate-600">Senha inicial (opcional)</span>
+              <input
+                value={createClinicForm.owner_password}
+                onChange={(event) =>
+                  setCreateClinicForm((prev) => ({ ...prev, owner_password: event.target.value }))
+                }
+                className="apple-input w-full"
+                placeholder="Deixe vazio para gerar automatica"
+              />
+            </label>
+            <div className="grid grid-cols-1 gap-3">
+              <label className="text-sm space-y-1">
+                <span className="text-slate-600">Plano inicial</span>
+                <input
+                  value={createClinicForm.plan_code}
+                  onChange={(event) =>
+                    setCreateClinicForm((prev) => ({ ...prev, plan_code: event.target.value }))
+                  }
+                  className="apple-input w-full"
+                />
+              </label>
+              <div className="grid grid-cols-2 gap-3">
+                <label className="text-sm space-y-1">
+                  <span className="text-slate-600">Status</span>
+                  <select
+                    value={createClinicForm.status}
+                    onChange={(event) =>
+                      setCreateClinicForm((prev) => ({
+                        ...prev,
+                        status: event.target.value as TenantStatus,
+                      }))
+                    }
+                    className="apple-input w-full"
+                  >
+                    <option value="trialing">Teste</option>
+                    <option value="active">Ativa</option>
+                    <option value="past_due">Em atraso</option>
+                    <option value="suspended">Suspensa</option>
+                    <option value="cancelled">Cancelada</option>
+                  </select>
+                </label>
+                <label className="text-sm space-y-1">
+                  <span className="text-slate-600">Cobranca</span>
+                  <select
+                    value={createClinicForm.billing_provider}
+                    onChange={(event) =>
+                      setCreateClinicForm((prev) => ({
+                        ...prev,
+                        billing_provider: event.target.value as BillingProvider,
+                      }))
+                    }
+                    className="apple-input w-full"
+                  >
+                    <option value="manual">Manual</option>
+                    <option value="asaas">Asaas</option>
+                  </select>
+                </label>
+              </div>
+            </div>
 
-          <button
-            onClick={() => loadClinics()}
-            className="w-full border border-petroleum/30 text-petroleum px-4 py-2.5 rounded-xl font-semibold text-sm"
-          >
-            Aplicar filtro
-          </button>
+            <div className="space-y-2">
+              <div className="flex items-center justify-between gap-2 text-xs uppercase tracking-wider text-slate-500">
+                <span>Flags iniciais</span>
+                <div className="flex items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setCreateClinicFeatures([...defaultCreateClinicFeatures])}
+                    className="text-petroleum font-semibold"
+                  >
+                    Marcar todas
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setCreateClinicFeatures([])}
+                    className="text-slate-500 font-semibold"
+                  >
+                    Limpar
+                  </button>
+                </div>
+              </div>
+              <div className="space-y-1.5">
+                {defaultCreateClinicFeatures.map((featureKey) => {
+                  const checked = createClinicFeatures.includes(featureKey);
+                  return (
+                    <label key={featureKey} className="flex items-center gap-2 text-sm text-slate-700">
+                      <input
+                        type="checkbox"
+                        checked={checked}
+                        onChange={() => toggleCreateClinicFeature(featureKey)}
+                        className="h-4 w-4 rounded border-slate-300 text-petroleum focus:ring-petroleum/40"
+                      />
+                      <span>{featureLabels[featureKey] || featureKey}</span>
+                    </label>
+                  );
+                })}
+              </div>
+            </div>
 
-          <div className="space-y-2 max-h-[70vh] overflow-auto pr-1">
-            {clinics.length === 0 ? (
-              <div className="text-sm text-slate-500 py-6 text-center">Nenhuma clinica encontrada.</div>
-            ) : (
-              clinics.map((clinic) => (
-                <button
-                  key={clinic.id}
-                  onClick={() => setSelectedClinicId(clinic.id)}
-                  className={`w-full text-left rounded-2xl border p-3 transition-all ${
-                    selectedClinicId === clinic.id
-                      ? "border-petroleum bg-petroleum/10"
-                      : "border-slate-200 hover:border-petroleum/40 hover:bg-white"
-                  }`}
-                >
-                  <div className="flex items-start justify-between gap-2">
-                    <p className="font-semibold text-sm text-[#1A1A1A] line-clamp-1">{clinic.name}</p>
-                    <span
-                      className={`text-[11px] px-2 py-0.5 rounded-full font-semibold ${
-                        clinic.subscription.status === "active"
-                          ? "bg-success/15 text-success"
-                          : clinic.subscription.status === "trialing"
-                          ? "bg-warning/15 text-warning"
-                          : clinic.subscription.status === "past_due"
-                          ? "bg-warning/20 text-[#9a6b00]"
-                          : "bg-error/15 text-error"
-                      }`}
-                    >
-                      {statusLabels[clinic.subscription.status]}
-                    </span>
-                  </div>
-                  <p className="text-xs text-slate-500 mt-1 line-clamp-1">
-                    {clinic.owner_full_name || clinic.owner_email || clinic.owner_user_id}
+            <button
+              type="submit"
+              disabled={creatingClinic}
+              className="w-full bg-petroleum text-white px-4 py-2.5 rounded-xl font-semibold text-sm disabled:opacity-60"
+            >
+              {creatingClinic ? "Cadastrando..." : "Cadastrar empresa"}
+            </button>
+
+            {createClinicFlash && (
+              <div className="rounded-xl border border-success/30 bg-success/10 px-3 py-2 text-sm text-slate-700 space-y-1">
+                <p className="font-semibold text-success">
+                  Empresa criada: {createClinicFlash.clinic_name}
+                </p>
+                <p>
+                  Responsavel: {createClinicFlash.owner_email || "email nao informado"} |{" "}
+                  {createClinicFlash.owner_created ? "usuario criado agora" : "usuario existente"}
+                </p>
+                {createClinicFlash.temporary_password && (
+                  <p className="font-mono text-xs break-all">
+                    Senha temporaria: {createClinicFlash.temporary_password}
                   </p>
-                  <div className="mt-2 text-xs text-slate-500 flex items-center justify-between">
-                    <span>{clinic.members.active_members} membros</span>
-                    <span>{clinic.features.enabled_count} flags ativas</span>
-                  </div>
-                </button>
-              ))
+                )}
+              </div>
             )}
+          </form>
+
+          <div className="glass-panel p-5 h-fit space-y-4">
+            <div className="flex items-center gap-2 text-petroleum font-bold uppercase text-xs tracking-wider">
+              <Building2 size={16} /> Clinicas
+            </div>
+            <div className="relative">
+              <Search size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
+              <input
+                value={query}
+                onChange={(event) => setQuery(event.target.value)}
+                onKeyDown={(event) => {
+                  if (event.key === "Enter") {
+                    event.preventDefault();
+                    loadClinics();
+                  }
+                }}
+                placeholder="Buscar por clinica ou responsavel"
+                className="apple-input w-full pl-10"
+              />
+            </div>
+
+            <button
+              onClick={() => loadClinics()}
+              className="w-full border border-petroleum/30 text-petroleum px-4 py-2.5 rounded-xl font-semibold text-sm"
+            >
+              Aplicar filtro
+            </button>
+
+            <div className="space-y-2 max-h-[50vh] overflow-auto pr-1">
+              {clinics.length === 0 ? (
+                <div className="text-sm text-slate-500 py-6 text-center">Nenhuma clinica encontrada.</div>
+              ) : (
+                clinics.map((clinic) => (
+                  <button
+                    key={clinic.id}
+                    onClick={() => setSelectedClinicId(clinic.id)}
+                    className={`w-full text-left rounded-2xl border p-3 transition-all ${
+                      selectedClinicId === clinic.id
+                        ? "border-petroleum bg-petroleum/10"
+                        : "border-slate-200 hover:border-petroleum/40 hover:bg-white"
+                    }`}
+                  >
+                    <div className="flex items-start justify-between gap-2">
+                      <p className="font-semibold text-sm text-[#1A1A1A] line-clamp-1">{clinic.name}</p>
+                      <span
+                        className={`text-[11px] px-2 py-0.5 rounded-full font-semibold ${
+                          clinic.subscription.status === "active"
+                            ? "bg-success/15 text-success"
+                            : clinic.subscription.status === "trialing"
+                            ? "bg-warning/15 text-warning"
+                            : clinic.subscription.status === "past_due"
+                            ? "bg-warning/20 text-[#9a6b00]"
+                            : "bg-error/15 text-error"
+                        }`}
+                      >
+                        {statusLabels[clinic.subscription.status]}
+                      </span>
+                    </div>
+                    <p className="text-xs text-slate-500 mt-1 line-clamp-1">
+                      {clinic.owner_full_name || clinic.owner_email || clinic.owner_user_id}
+                    </p>
+                    <div className="mt-2 text-xs text-slate-500 flex items-center justify-between">
+                      <span>{clinic.members.active_members} membros</span>
+                      <span>{clinic.features.enabled_count} flags ativas</span>
+                    </div>
+                  </button>
+                ))
+              )}
+            </div>
           </div>
         </section>
 
@@ -663,13 +949,16 @@ export const SuperAdminApp = () => {
                   <div>
                     <h2 className="text-2xl font-bold text-[#1A1A1A]">{selectedClinic.name}</h2>
                     <p className="text-sm text-slate-500 mt-1">
-                      Criada em {toLocalDateTime(selectedClinic.created_at)} • Owner: {selectedClinic.owner_email || selectedClinic.owner_user_id}
+                      Criada em {toLocalDateTime(selectedClinic.created_at)} | Responsavel:{" "}
+                      {selectedClinic.owner_email || selectedClinic.owner_user_id}
                     </p>
                   </div>
                   <div className="text-right text-sm">
                     <p className="font-semibold text-[#1A1A1A]">Membros ativos: {selectedClinic.members.active_members}</p>
                     <p className="text-slate-500">
-                      Admin {selectedClinic.members.roles.admin} • Profissionais {selectedClinic.members.roles.professional} • Secretaria {selectedClinic.members.roles.secretary}
+                      Admin {selectedClinic.members.roles.admin} | Profissionais{" "}
+                      {selectedClinic.members.roles.professional} | Secretaria{" "}
+                      {selectedClinic.members.roles.secretary}
                     </p>
                   </div>
                 </div>
@@ -924,7 +1213,7 @@ export const SuperAdminApp = () => {
                     <History size={16} /> Auditoria recente
                   </div>
 
-                  <div className="space-y-2 max-h-[410px] overflow-auto pr-1">
+                  <div className="space-y-2 max-h-[380px] overflow-auto pr-1">
                     {auditLogs.length === 0 ? (
                       <p className="text-sm text-slate-500">Sem eventos de auditoria.</p>
                     ) : (
@@ -932,7 +1221,7 @@ export const SuperAdminApp = () => {
                         <div key={log.id} className="border border-slate-200 rounded-xl p-3 text-sm">
                           <p className="font-semibold text-[#1A1A1A]">{log.action}</p>
                           <p className="text-xs text-slate-500 mt-1">
-                            {toLocalDateTime(log.created_at)} • {log.actor_type}
+                            {toLocalDateTime(log.created_at)} | {log.actor_type}
                           </p>
                           <p className="text-xs text-slate-500 mt-1 break-all">
                             alvo: {log.target_type} {log.target_id || "-"}
@@ -940,6 +1229,45 @@ export const SuperAdminApp = () => {
                         </div>
                       ))
                     )}
+                  </div>
+                </div>
+
+                <div className="glass-panel p-5 space-y-3">
+                  <div className="flex items-center gap-2 text-petroleum font-bold uppercase text-xs tracking-wider">
+                    <BookOpenText size={16} /> Ajuda de configuracao
+                  </div>
+                  <div className="space-y-3 text-sm text-slate-700">
+                    <div className="rounded-xl border border-slate-200 p-3">
+                      <p className="font-semibold text-[#1A1A1A]">Dados da empresa e responsavel</p>
+                      <p className="text-slate-600 mt-1">
+                        Nome da empresa/clinica + email do responsavel. Se o email nao existir no
+                        Auth, o sistema cria automaticamente e retorna senha temporaria.
+                      </p>
+                    </div>
+                    <div className="rounded-xl border border-slate-200 p-3">
+                      <p className="font-semibold text-[#1A1A1A]">
+                        Asaas (quando usar cobranca automatica)
+                      </p>
+                      <p className="text-slate-600 mt-1">
+                        Pegue no Asaas os campos `customer id` e `subscription id` em Clientes e
+                        Assinaturas. Depois salve em "Assinatura e bloqueio".
+                      </p>
+                    </div>
+                    <div className="rounded-xl border border-slate-200 p-3">
+                      <p className="font-semibold text-[#1A1A1A]">Evolution API / Mensageria</p>
+                      <p className="text-slate-600 mt-1">
+                        Necessario `api_base_url`, `instance_name`, `api_token` e
+                        `webhook_secret` da instancia Evolution para habilitar inbox e automacoes
+                        por labels.
+                      </p>
+                    </div>
+                    <div className="rounded-xl border border-slate-200 p-3">
+                      <p className="font-semibold text-[#1A1A1A]">Dominios e auth</p>
+                      <p className="text-slate-600 mt-1">
+                        Confirme DNS e SSL do dominio cliente e mantenha o dominio de superadmin
+                        exclusivo da plataforma.
+                      </p>
+                    </div>
                   </div>
                 </div>
 
@@ -960,3 +1288,4 @@ export const SuperAdminApp = () => {
     </div>
   );
 };
+

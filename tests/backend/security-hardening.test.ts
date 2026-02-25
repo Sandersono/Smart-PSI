@@ -50,6 +50,11 @@ function createSupabaseMock(seed: Partial<MockDb> = {}) {
     counters.set(table, current + 1);
     return current;
   };
+  const authUsers = cloneRow(seed.auth_users || []) as Array<{
+    id: string;
+    email?: string | null;
+    user_metadata?: Record<string, unknown>;
+  }>;
 
   const from = (table: string) => {
     if (!db[table]) db[table] = [];
@@ -136,12 +141,15 @@ function createSupabaseMock(seed: Partial<MockDb> = {}) {
       if (action === "upsert") {
         const incoming = Array.isArray(payload) ? payload : [payload];
         const out: MockRow[] = [];
-        const key = upsertConflictKey?.split(",")[0]?.trim() || null;
+        const keys = (upsertConflictKey || "")
+          .split(",")
+          .map((item) => item.trim())
+          .filter(Boolean);
         for (const raw of incoming) {
           const row = cloneRow(raw || {});
           let existing: MockRow | undefined;
-          if (key) {
-            existing = tableRows.find((item) => item[key] === row[key]);
+          if (keys.length > 0) {
+            existing = tableRows.find((item) => keys.every((key) => item[key] === row[key]));
           }
           if (existing) {
             for (const [k, v] of Object.entries(row)) {
@@ -289,11 +297,47 @@ function createSupabaseMock(seed: Partial<MockDb> = {}) {
         return { data: { user: null }, error: { message: "Invalid token" } };
       }),
       admin: {
-        getUserById: vi.fn(async (userId: string) => ({
-          data: { user: { id: userId, email: `${userId}@example.com`, user_metadata: {} } },
-          error: null,
-        })),
-        listUsers: vi.fn(async () => ({ data: { users: [] }, error: null })),
+        getUserById: vi.fn(async (userId: string) => {
+          const fromAuth = authUsers.find((item) => item.id === userId);
+          if (fromAuth) {
+            return { data: { user: cloneRow(fromAuth) }, error: null };
+          }
+          return {
+            data: { user: { id: userId, email: `${userId}@example.com`, user_metadata: {} } },
+            error: null,
+          };
+        }),
+        listUsers: vi.fn(async (params?: { page?: number; perPage?: number }) => {
+          const page = Math.max(1, Number(params?.page || 1));
+          const perPage = Math.max(1, Number(params?.perPage || 1000));
+          const start = (page - 1) * perPage;
+          const users = authUsers.slice(start, start + perPage).map((item) => cloneRow(item));
+          return { data: { users }, error: null };
+        }),
+        createUser: vi.fn(
+          async (payload: {
+            email?: string;
+            password?: string;
+            user_metadata?: Record<string, unknown>;
+          }) => {
+            const email = String(payload?.email || "")
+              .trim()
+              .toLowerCase();
+            if (!email) {
+              return { data: { user: null }, error: { message: "Email required" } };
+            }
+            if (authUsers.some((item) => String(item.email || "").toLowerCase() === email)) {
+              return { data: { user: null }, error: { message: "User already exists" } };
+            }
+            const user = {
+              id: `auth-user-${nextId("auth_users")}`,
+              email,
+              user_metadata: cloneRow(payload?.user_metadata || {}),
+            };
+            authUsers.push(user);
+            return { data: { user: cloneRow(user) }, error: null };
+          }
+        ),
       },
     },
   };
@@ -514,6 +558,122 @@ describe("superadmin authorization and tenant control", () => {
     expect(response.body?.totals?.active).toBe(1);
     expect(response.body?.totals?.suspended).toBe(1);
     expect(response.body?.totals?.blocked).toBe(1);
+  });
+
+  it("creates clinic with existing owner email", async () => {
+    const { app, db } = await createTestApp({
+      env: {
+        NODE_ENV: "development",
+        ALLOW_DEV_USER_BYPASS: "true",
+      },
+      seed: {
+        platform_superadmins: [
+          {
+            user_id: "sa-user",
+            active: true,
+          },
+        ],
+        auth_users: [
+          {
+            id: "owner-existing-id",
+            email: "owner@smartpsi.com",
+            user_metadata: { full_name: "Owner Existente" },
+          },
+        ],
+      },
+    });
+
+    const response = await request(app)
+      .post("/api/superadmin/clinics")
+      .set("x-user-id", "sa-user")
+      .send({
+        name: "Clinica Nova",
+        owner_email: "OWNER@SMARTPSI.COM",
+        owner_full_name: "Owner Existente",
+        plan_code: "starter",
+        status: "trialing",
+        billing_provider: "manual",
+        enabled_features: ["billing.asaas", "messaging.inbox"],
+      });
+
+    expect(response.status).toBe(201);
+    expect(response.body?.clinic?.name).toBe("Clinica Nova");
+    expect(response.body?.owner?.created).toBe(false);
+    expect(response.body?.owner?.user_id).toBe("owner-existing-id");
+    expect(db.clinics).toHaveLength(1);
+    const createdClinicId = String(db.clinics[0].id);
+    expect(db.clinics[0]).toMatchObject({
+      name: "Clinica Nova",
+      owner_user_id: "owner-existing-id",
+    });
+    expect(db.clinic_members[0]).toMatchObject({
+      clinic_id: createdClinicId,
+      user_id: "owner-existing-id",
+      role: "admin",
+      active: true,
+    });
+    expect(db.tenant_subscriptions[0]).toMatchObject({
+      clinic_id: createdClinicId,
+      plan_code: "starter",
+      status: "trialing",
+      billing_provider: "manual",
+    });
+    expect(db.tenant_feature_flags).toHaveLength(2);
+  });
+
+  it("creates clinic and owner auth user when owner email is missing", async () => {
+    const { app, db } = await createTestApp({
+      env: {
+        NODE_ENV: "development",
+        ALLOW_DEV_USER_BYPASS: "true",
+      },
+      seed: {
+        platform_superadmins: [
+          {
+            user_id: "sa-user",
+            active: true,
+          },
+        ],
+      },
+    });
+
+    const response = await request(app)
+      .post("/api/superadmin/clinics")
+      .set("x-user-id", "sa-user")
+      .send({
+        name: "Clinica Auto Owner",
+        owner_email: "novo.owner@smartpsi.com",
+        owner_full_name: "Novo Owner",
+        owner_password: "SenhaTemp@123",
+        create_owner_if_missing: true,
+        plan_code: "professional",
+        status: "active",
+        billing_provider: "asaas",
+        enabled_features: ["billing.asaas"],
+      });
+
+    expect(response.status).toBe(201);
+    expect(response.body?.owner?.created).toBe(true);
+    expect(response.body?.owner?.temporary_password).toBe("SenhaTemp@123");
+    expect(String(response.body?.owner?.user_id || "")).toContain("auth-user-");
+    expect(db.clinics).toHaveLength(1);
+    const createdClinicId = String(db.clinics[0].id);
+    expect(db.clinics[0]).toMatchObject({
+      name: "Clinica Auto Owner",
+      owner_user_id: response.body?.owner?.user_id,
+    });
+    expect(db.clinic_members[0]).toMatchObject({
+      clinic_id: createdClinicId,
+      user_id: response.body?.owner?.user_id,
+      role: "admin",
+      active: true,
+    });
+    expect(db.tenant_subscriptions[0]).toMatchObject({
+      clinic_id: createdClinicId,
+      plan_code: "professional",
+      status: "active",
+      billing_provider: "asaas",
+    });
   });
 });
 
