@@ -8,6 +8,7 @@ services:
         VITE_SUPABASE_URL: ${VITE_SUPABASE_URL:-https://your-project-ref.supabase.co}
         VITE_SUPABASE_ANON_KEY: ${VITE_SUPABASE_ANON_KEY:-your-anon-key}
         VITE_SENTRY_DSN: ${VITE_SENTRY_DSN:-}
+        VITE_SUPERADMIN_DOMAINS: ${VITE_SUPERADMIN_DOMAINS:-}
     env_file:
       - ./.env.production
     restart: unless-stopped

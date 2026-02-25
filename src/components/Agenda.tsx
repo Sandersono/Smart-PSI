@@ -643,7 +643,7 @@ export const Agenda = ({ accessToken, onStartSession }: AgendaProps) => {
           {providers.map((provider) => (
             <option key={provider.user_id} value={provider.user_id}>
               {(provider.full_name || provider.email || provider.user_id) +
-                ` (${provider.role === "admin" ? "admin" : "professional"})`}
+                ` (${provider.role === "admin" ? "Administrador" : "Profissional"})`}
             </option>
           ))}
         </select>

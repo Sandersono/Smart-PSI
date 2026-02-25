@@ -327,18 +327,24 @@ export default function App() {
   }
 
   if (meError && !me) {
+    const schemaError = meError.toLowerCase().includes("schema");
     return (
       <div className="min-h-screen bg-[#F7F8FA] flex items-center justify-center p-6">
         <div className="glass-panel max-w-2xl p-8 space-y-4">
-          <h2 className="text-2xl font-bold text-petroleum">Configuracao pendente do banco</h2>
+          <h2 className="text-2xl font-bold text-petroleum">
+            {schemaError ? "Configuracao pendente do banco" : "Acesso indisponivel"}
+          </h2>
           <p className="text-slate-600">{meError}</p>
-          <p className="text-sm text-slate-500">
-            Execute no Supabase SQL Editor: `supabase/migrations/20260221_002_clinic_rbac_agenda_asaas.sql`,
-            `supabase/migrations/20260221_003_google_agenda_notes_source.sql` e
-            `supabase/migrations/20260221_004_financial_monthly_asaas_settings.sql`,
-            `supabase/migrations/20260222_005_ai_usage_meter.sql` e
-            `supabase/migrations/20260224_006_patient_linkage_guardrails.sql`.
-          </p>
+          {schemaError && (
+            <p className="text-sm text-slate-500">
+              Execute no Supabase SQL Editor: `supabase/migrations/20260221_002_clinic_rbac_agenda_asaas.sql`,
+              `supabase/migrations/20260221_003_google_agenda_notes_source.sql` e
+              `supabase/migrations/20260221_004_financial_monthly_asaas_settings.sql`,
+              `supabase/migrations/20260222_005_ai_usage_meter.sql`,
+              `supabase/migrations/20260224_006_patient_linkage_guardrails.sql` e
+              `supabase/migrations/20260225_007_superadmin_platform_foundation.sql`.
+            </p>
+          )}
         </div>
       </div>
     );

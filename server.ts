@@ -27,6 +27,7 @@ const asaasBaseUrl = process.env.ASAAS_BASE_URL || "https://sandbox.asaas.com/ap
 const asaasWebhookToken = process.env.ASAAS_WEBHOOK_TOKEN || "";
 const asaasDefaultSessionValue = Number(process.env.ASAAS_DEFAULT_SESSION_VALUE || "150");
 const appUrl = process.env.APP_URL || "http://localhost:3000";
+const adminUrl = process.env.ADMIN_URL || "";
 const googleClientId = process.env.GOOGLE_CLIENT_ID || "";
 const googleClientSecret = process.env.GOOGLE_CLIENT_SECRET || "";
 const googleRedirectUri = process.env.GOOGLE_REDIRECT_URI || `${appUrl}/api/integrations/google/callback`;
@@ -60,6 +61,39 @@ const aiAudioTokensPerMinute = Number(process.env.AI_AUDIO_TOKENS_PER_MINUTE || 
 const aiAudioAvgBitrateKbps = Number(process.env.AI_AUDIO_AVG_BITRATE_KBPS || "64");
 const aiCostCurrency = process.env.AI_COST_CURRENCY || "BRL";
 
+function extractHost(value: string | null | undefined) {
+  const raw = String(value || "").trim();
+  if (!raw) return null;
+  try {
+    if (raw.includes("://")) {
+      return new URL(raw).hostname.toLowerCase();
+    }
+    return new URL(`https://${raw}`).hostname.toLowerCase();
+  } catch {
+    return null;
+  }
+}
+
+const superadminAllowedHosts = Array.from(
+  new Set(
+    [
+      ...String(process.env.SUPERADMIN_ALLOWED_HOSTS || "")
+        .split(",")
+        .map((item) => extractHost(item))
+        .filter((item): item is string => Boolean(item)),
+      extractHost(adminUrl),
+    ].filter((item): item is string => Boolean(item))
+  )
+);
+const superadminBootstrapUserIds = Array.from(
+  new Set(
+    String(process.env.SUPERADMIN_BOOTSTRAP_USER_IDS || "")
+      .split(",")
+      .map((item) => item.trim())
+      .filter(Boolean)
+  )
+);
+
 const missingServerEnv = [
   ["SUPABASE_URL", supabaseUrl],
   ["SUPABASE_SERVICE_ROLE_KEY", supabaseServiceRoleKey],
@@ -92,10 +126,15 @@ if (sentryDsn) {
 const PORT = Number(process.env.PORT || 3000);
 
 type UserRole = "admin" | "professional" | "secretary";
+type TenantStatus = "trialing" | "active" | "past_due" | "suspended" | "cancelled";
+type BillingProvider = "manual" | "asaas";
 type UserContext = {
   userId: string;
   clinicId: string;
   role: UserRole;
+};
+type SuperadminContext = {
+  userId: string;
 };
 type AppointmentStatus = "scheduled" | "completed" | "cancelled";
 type SessionType = "individual" | "couple";
@@ -136,6 +175,170 @@ async function resolveUserId(req: Request): Promise<string | null> {
   return null;
 }
 
+let warnedMissingTenantSubscriptionSchema = false;
+let warnedMissingSuperadminSchema = false;
+
+async function bootstrapSuperadminsFromEnv() {
+  if (superadminBootstrapUserIds.length === 0) return;
+  try {
+    const nowIso = new Date().toISOString();
+    const payload = superadminBootstrapUserIds.map((userId) => ({
+      user_id: userId,
+      active: true,
+      updated_at: nowIso,
+    }));
+    const { error } = await supabase.from("platform_superadmins").upsert(payload, {
+      onConflict: "user_id",
+    });
+    if (error) throw error;
+  } catch (error) {
+    if (isMissingRelationError(error)) {
+      if (!warnedMissingSuperadminSchema) {
+        warnedMissingSuperadminSchema = true;
+        console.warn(
+          "platform_superadmins table is missing. Run migration 20260225_007_superadmin_platform_foundation.sql."
+        );
+      }
+      return;
+    }
+    throw error;
+  }
+}
+
+async function assertUserIsSuperadmin(userId: string) {
+  const { data, error } = await supabase
+    .from("platform_superadmins")
+    .select("user_id, active")
+    .eq("user_id", userId)
+    .maybeSingle();
+
+  if (error) {
+    if (isMissingRelationError(error)) {
+      throw new HttpError(
+        503,
+        "Database schema is outdated. Run migration 20260225_007_superadmin_platform_foundation.sql."
+      );
+    }
+    throw error;
+  }
+
+  if (!data || data.active === false) {
+    throw new HttpError(403, "Usuario sem permissao de superadmin.");
+  }
+}
+
+function assertSuperadminHost(req: Request) {
+  if (!isProduction) return;
+  if (superadminAllowedHosts.length === 0) return;
+  const requestHost = String(req.hostname || "").toLowerCase();
+  if (!superadminAllowedHosts.includes(requestHost)) {
+    throw new HttpError(
+      403,
+      `Superadmin disponivel apenas em: ${superadminAllowedHosts.join(", ")}.`
+    );
+  }
+}
+
+async function requireSuperadminContext(req: Request, res: Response): Promise<SuperadminContext | null> {
+  try {
+    const userId = await resolveUserId(req);
+    if (!userId) {
+      res.status(401).json({
+        error: allowDevUserBypass
+          ? "Missing user context. Set SUPABASE_DEV_USER_ID (dev) or send Bearer token."
+          : "Missing user context. Send a valid Bearer token.",
+      });
+      return null;
+    }
+
+    assertSuperadminHost(req);
+    await assertUserIsSuperadmin(userId);
+    return { userId };
+  } catch (error) {
+    handleRouteError(res, error, "requireSuperadminContext");
+    return null;
+  }
+}
+
+type TenantAccessState = {
+  status: TenantStatus | null;
+  blocked: boolean;
+  reason: string | null;
+};
+
+async function resolveClinicAccessState(clinicId: string): Promise<TenantAccessState> {
+  try {
+    const { data, error } = await supabase
+      .from("tenant_subscriptions")
+      .select("status, payment_grace_until, suspended_reason")
+      .eq("clinic_id", clinicId)
+      .maybeSingle();
+
+    if (error) throw error;
+    if (!data) {
+      return { status: null, blocked: false, reason: null };
+    }
+
+    const status = parseTenantStatus(data.status);
+    const suspendedReason = toNullableString(data.suspended_reason);
+    if (!status || status === "active" || status === "trialing") {
+      return { status, blocked: false, reason: null };
+    }
+
+    if (status === "past_due") {
+      const graceUntil = toNullableString(data.payment_grace_until);
+      if (graceUntil) {
+        const graceDate = new Date(graceUntil);
+        if (!Number.isNaN(graceDate.getTime()) && graceDate.getTime() >= Date.now()) {
+          return { status, blocked: false, reason: null };
+        }
+      }
+      return {
+        status,
+        blocked: true,
+        reason: "Acesso bloqueado por pendencia financeira. Regularize o pagamento para liberar o uso.",
+      };
+    }
+
+    if (status === "suspended") {
+      return {
+        status,
+        blocked: true,
+        reason:
+          suspendedReason ||
+          "Acesso bloqueado administrativamente. Contate o suporte para reativacao.",
+      };
+    }
+
+    return {
+      status,
+      blocked: true,
+      reason:
+        suspendedReason || "Assinatura cancelada. Reative um plano para retomar o acesso ao sistema.",
+    };
+  } catch (error) {
+    if (isMissingRelationError(error)) {
+      if (!warnedMissingTenantSubscriptionSchema) {
+        warnedMissingTenantSubscriptionSchema = true;
+        console.warn(
+          "tenant_subscriptions table is missing. Run migration 20260225_007_superadmin_platform_foundation.sql."
+        );
+      }
+      return { status: null, blocked: false, reason: null };
+    }
+    throw error;
+  }
+}
+
+async function assertClinicAccessAllowed(clinicId: string) {
+  const state = await resolveClinicAccessState(clinicId);
+  if (!state.blocked) return;
+  if (state.status === "past_due") {
+    throw new HttpError(402, state.reason || "Pagamento pendente.");
+  }
+  throw new HttpError(403, state.reason || "Acesso bloqueado.");
+}
+
 async function ensureClinicMembership(userId: string, preferredClinicId?: string | null) {
   const { data: memberships, error: membershipsError } = await supabase
     .from("clinic_members")
@@ -149,7 +352,7 @@ async function ensureClinicMembership(userId: string, preferredClinicId?: string
     if (code === "42P01" || code === "PGRST205") {
       throw new HttpError(
         503,
-        "Database schema is outdated. Run migrations 20260221_002_clinic_rbac_agenda_asaas.sql, 20260221_003_google_agenda_notes_source.sql, 20260221_004_financial_monthly_asaas_settings.sql and 20260222_005_ai_usage_meter.sql."
+        "Database schema is outdated. Run migrations 20260221_002_clinic_rbac_agenda_asaas.sql, 20260221_003_google_agenda_notes_source.sql, 20260221_004_financial_monthly_asaas_settings.sql, 20260222_005_ai_usage_meter.sql, 20260224_006_patient_linkage_guardrails.sql and 20260225_007_superadmin_platform_foundation.sql."
       );
     }
     throw membershipsError;
@@ -175,6 +378,20 @@ async function ensureClinicMembership(userId: string, preferredClinicId?: string
       active: true,
     });
     if (memberError) throw memberError;
+
+    const { error: tenantError } = await supabase.from("tenant_subscriptions").upsert(
+      {
+        clinic_id: clinicData.id,
+        plan_code: "starter",
+        status: "active",
+        billing_provider: "manual",
+        updated_at: new Date().toISOString(),
+      },
+      { onConflict: "clinic_id" }
+    );
+    if (tenantError && !isMissingRelationError(tenantError)) {
+      throw tenantError;
+    }
 
     return { clinicId: String(clinicData.id), role: "admin" as UserRole };
   }
@@ -220,6 +437,8 @@ async function requireUserContext(
       role: membership.role,
     };
 
+    await assertClinicAccessAllowed(context.clinicId);
+
     if (roles && !roles.includes(context.role)) {
       res.status(403).json({ error: "Insufficient permissions for this action." });
       return null;
@@ -250,6 +469,19 @@ function toDateTimeOrNull(value: unknown): string | null {
   const parsed = new Date(normalized);
   if (Number.isNaN(parsed.getTime())) return null;
   return parsed.toISOString();
+}
+
+function parseOptionalDateTimeInput(
+  value: unknown,
+  fieldName: string
+): string | null | undefined {
+  if (value === undefined) return undefined;
+  if (value === null || value === "") return null;
+  const parsed = toDateTimeOrNull(value);
+  if (!parsed) {
+    throw new HttpError(400, `${fieldName} must be an ISO datetime or YYYY-MM-DD.`);
+  }
+  return parsed;
 }
 
 function toDateOnly(value: unknown): string | null {
@@ -320,6 +552,26 @@ function normalizeGoogleReminderPreset(value: unknown): GoogleReminderPreset {
 function parseRole(value: unknown): UserRole | null {
   const raw = toNullableString(value);
   if (raw === "admin" || raw === "professional" || raw === "secretary") return raw;
+  return null;
+}
+
+function parseTenantStatus(value: unknown): TenantStatus | null {
+  const raw = toNullableString(value);
+  if (
+    raw === "trialing" ||
+    raw === "active" ||
+    raw === "past_due" ||
+    raw === "suspended" ||
+    raw === "cancelled"
+  ) {
+    return raw;
+  }
+  return null;
+}
+
+function parseBillingProvider(value: unknown): BillingProvider | null {
+  const raw = toNullableString(value);
+  if (raw === "manual" || raw === "asaas") return raw;
   return null;
 }
 
@@ -815,6 +1067,51 @@ function handleRouteError(res: Response, error: unknown, context: string) {
     })
   );
   res.status(500).json({ error: "Internal server error" });
+}
+
+function toUuidOrNull(value: unknown) {
+  const raw = toNullableString(value);
+  if (!raw) return null;
+  const match = raw.match(
+    /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i
+  );
+  return match ? raw : null;
+}
+
+type PlatformAuditPayload = {
+  actorUserId: string | null;
+  actorType: "superadmin" | "system";
+  action: string;
+  targetType: string;
+  targetId?: string | null;
+  clinicId?: string | null;
+  metadata?: Record<string, unknown>;
+};
+
+async function registerPlatformAuditLog(payload: PlatformAuditPayload) {
+  try {
+    const { error } = await supabase.from("platform_audit_logs").insert({
+      actor_user_id: payload.actorUserId,
+      actor_type: payload.actorType,
+      action: payload.action,
+      target_type: payload.targetType,
+      target_id: payload.targetId || null,
+      clinic_id: payload.clinicId || null,
+      metadata: payload.metadata || {},
+    });
+    if (error) throw error;
+  } catch (error) {
+    if (isMissingRelationError(error)) {
+      if (!warnedMissingSuperadminSchema) {
+        warnedMissingSuperadminSchema = true;
+        console.warn(
+          "platform_audit_logs table is missing. Run migration 20260225_007_superadmin_platform_foundation.sql."
+        );
+      }
+      return;
+    }
+    console.error("[registerPlatformAuditLog]", error);
+  }
 }
 
 async function countNotesByRange(
@@ -2080,6 +2377,80 @@ async function generateMonthlyStatementsForPeriod(
   };
 }
 
+type TenantSubscriptionRow = {
+  clinic_id: string;
+  plan_code: string | null;
+  status: TenantStatus | null;
+  billing_provider: BillingProvider | null;
+  asaas_customer_id: string | null;
+  asaas_subscription_id: string | null;
+  trial_ends_at: string | null;
+  current_period_start: string | null;
+  current_period_end: string | null;
+  payment_grace_until: string | null;
+  next_charge_at: string | null;
+  blocked_at: string | null;
+  suspended_reason: string | null;
+  updated_at: string | null;
+};
+
+const defaultSuperadminFeatureKeys = [
+  "billing.asaas",
+  "messaging.evolution",
+  "messaging.inbox",
+  "crm.kanban",
+  "crm.pipeline_automation",
+  "ai.assistant",
+];
+
+function normalizeFeatureKey(value: unknown) {
+  const raw = toNullableString(value);
+  if (!raw) return null;
+  if (!/^[a-z0-9._-]+$/i.test(raw)) return null;
+  return raw.toLowerCase();
+}
+
+function subscriptionToResponse(
+  subscription: Partial<TenantSubscriptionRow> | null | undefined
+): TenantSubscriptionRow {
+  return {
+    clinic_id: String(subscription?.clinic_id || ""),
+    plan_code: toNullableString(subscription?.plan_code) || "starter",
+    status: parseTenantStatus(subscription?.status) || "active",
+    billing_provider: parseBillingProvider(subscription?.billing_provider) || "manual",
+    asaas_customer_id: toNullableString(subscription?.asaas_customer_id),
+    asaas_subscription_id: toNullableString(subscription?.asaas_subscription_id),
+    trial_ends_at: toNullableString(subscription?.trial_ends_at),
+    current_period_start: toNullableString(subscription?.current_period_start),
+    current_period_end: toNullableString(subscription?.current_period_end),
+    payment_grace_until: toNullableString(subscription?.payment_grace_until),
+    next_charge_at: toNullableString(subscription?.next_charge_at),
+    blocked_at: toNullableString(subscription?.blocked_at),
+    suspended_reason: toNullableString(subscription?.suspended_reason),
+    updated_at: toNullableString(subscription?.updated_at),
+  };
+}
+
+async function ensureClinicExistsOrThrow(clinicId: string) {
+  const { data, error } = await supabase
+    .from("clinics")
+    .select("id, name, owner_user_id, created_at")
+    .eq("id", clinicId)
+    .maybeSingle();
+  if (error) throw error;
+  if (!data) throw new HttpError(404, "Clinica nao encontrada.");
+  return data;
+}
+
+function throwIfSuperadminSchemaMissing(error: unknown) {
+  if (isMissingRelationError(error)) {
+    throw new HttpError(
+      503,
+      "Database schema is outdated. Run migration 20260225_007_superadmin_platform_foundation.sql."
+    );
+  }
+}
+
 type CreateAppOptions = {
   includeFrontend?: boolean;
 };
@@ -2087,7 +2458,9 @@ type CreateAppOptions = {
 export async function createApp(options: CreateAppOptions = {}) {
   const app = express();
   const includeFrontend = options.includeFrontend ?? true;
-  const defaultCorsOrigins = appUrl ? [appUrl] : [];
+  await bootstrapSuperadminsFromEnv();
+
+  const defaultCorsOrigins = [appUrl, adminUrl].filter((item): item is string => Boolean(item));
   const effectiveCorsOrigins =
     corsAllowedOrigins.length > 0 ? corsAllowedOrigins : defaultCorsOrigins;
   const globalLimiter = rateLimit({
@@ -2177,6 +2550,8 @@ export async function createApp(options: CreateAppOptions = {}) {
       googleFeatureEnabled: featureGoogleEnabled,
       asaasConfigured: isAsaasConfigured(),
       googleConfigured: isGoogleConfigured(),
+      superadminHostsConfigured: superadminAllowedHosts,
+      superadminBootstrapConfigured: superadminBootstrapUserIds.length > 0,
     });
   });
 
@@ -2189,6 +2564,662 @@ export async function createApp(options: CreateAppOptions = {}) {
       clinic_id: context.clinicId,
       role: context.role,
     });
+  });
+
+  app.get("/api/superadmin/me", sensitiveLimiter, async (req, res) => {
+    const context = await requireSuperadminContext(req, res);
+    if (!context) return;
+
+    try {
+      const [authUser, profile] = await Promise.all([
+        supabase.auth.admin.getUserById(context.userId),
+        supabase
+          .from("platform_superadmins")
+          .select("user_id, full_name, email, active, created_at, updated_at")
+          .eq("user_id", context.userId)
+          .maybeSingle(),
+      ]);
+
+      if (authUser.error) throw authUser.error;
+      if (profile.error) {
+        throwIfSuperadminSchemaMissing(profile.error);
+        throw profile.error;
+      }
+
+      const user = authUser.data?.user;
+      res.json({
+        user_id: context.userId,
+        email: profile.data?.email || user?.email || null,
+        full_name: profile.data?.full_name || user?.user_metadata?.full_name || null,
+        active: profile.data?.active !== false,
+        allowed_hosts: superadminAllowedHosts,
+      });
+    } catch (error) {
+      handleRouteError(res, error, "GET /api/superadmin/me");
+    }
+  });
+
+  app.get("/api/superadmin/dashboard/overview", async (req, res) => {
+    const context = await requireSuperadminContext(req, res);
+    if (!context) return;
+
+    try {
+      const { data: clinics, error: clinicsError } = await supabase
+        .from("clinics")
+        .select("id, name, created_at")
+        .order("created_at", { ascending: false });
+      if (clinicsError) throw clinicsError;
+
+      const clinicIds = (clinics || []).map((clinic) => String(clinic.id));
+      let subscriptions: Array<Record<string, unknown>> = [];
+      let members: Array<Record<string, unknown>> = [];
+
+      if (clinicIds.length > 0) {
+        const [subscriptionsResult, membersResult] = await Promise.all([
+          supabase
+            .from("tenant_subscriptions")
+            .select("clinic_id, status, updated_at")
+            .in("clinic_id", clinicIds),
+          supabase.from("clinic_members").select("clinic_id, active").in("clinic_id", clinicIds),
+        ]);
+
+        if (subscriptionsResult.error) throw subscriptionsResult.error;
+        if (membersResult.error) throw membersResult.error;
+
+        subscriptions = subscriptionsResult.data || [];
+        members = membersResult.data || [];
+      }
+
+      const statusMap = new Map<string, TenantStatus>();
+      for (const item of subscriptions) {
+        const status = parseTenantStatus(item.status);
+        if (!status) continue;
+        statusMap.set(String(item.clinic_id), status);
+      }
+
+      const totals = {
+        clinics_total: clinicIds.length,
+        active: 0,
+        trialing: 0,
+        past_due: 0,
+        suspended: 0,
+        cancelled: 0,
+        blocked: 0,
+        members_total: 0,
+      };
+
+      for (const clinic of clinics || []) {
+        const status = statusMap.get(String(clinic.id)) || "active";
+        if (status === "trialing") totals.trialing += 1;
+        if (status === "active") totals.active += 1;
+        if (status === "past_due") totals.past_due += 1;
+        if (status === "suspended") totals.suspended += 1;
+        if (status === "cancelled") totals.cancelled += 1;
+        if (status === "suspended" || status === "cancelled") {
+          totals.blocked += 1;
+        }
+      }
+
+      totals.members_total = members.filter((member) => member.active !== false).length;
+
+      const recentClinics = (clinics || []).slice(0, 8).map((clinic) => ({
+        id: String(clinic.id),
+        name: String(clinic.name || ""),
+        created_at: String(clinic.created_at || ""),
+        status: statusMap.get(String(clinic.id)) || "active",
+      }));
+
+      res.json({
+        totals,
+        recent_clinics: recentClinics,
+      });
+    } catch (error) {
+      try {
+        throwIfSuperadminSchemaMissing(error);
+      } catch (mappedError) {
+        handleRouteError(res, mappedError, "GET /api/superadmin/dashboard/overview");
+        return;
+      }
+      handleRouteError(res, error, "GET /api/superadmin/dashboard/overview");
+    }
+  });
+
+  app.get("/api/superadmin/clinics", async (req, res) => {
+    const context = await requireSuperadminContext(req, res);
+    if (!context) return;
+
+    try {
+      const queryText = String(req.query?.q || "")
+        .trim()
+        .toLowerCase();
+      const limitRaw = Number(req.query?.limit || 50);
+      const limit = Number.isFinite(limitRaw) ? Math.min(Math.max(limitRaw, 1), 300) : 50;
+
+      const { data: clinicRows, error: clinicError } = await supabase
+        .from("clinics")
+        .select("id, name, owner_user_id, created_at")
+        .order("created_at", { ascending: false })
+        .limit(limit);
+      if (clinicError) throw clinicError;
+
+      const clinics = clinicRows || [];
+      const clinicIds = clinics.map((clinic) => String(clinic.id));
+      const ownerIds = Array.from(new Set(clinics.map((clinic) => String(clinic.owner_user_id))));
+
+      const [subscriptionsResult, membersResult, flagsResult] = await Promise.all([
+        clinicIds.length > 0
+          ? supabase
+              .from("tenant_subscriptions")
+              .select(
+                "clinic_id, plan_code, status, billing_provider, asaas_customer_id, asaas_subscription_id, trial_ends_at, current_period_start, current_period_end, payment_grace_until, next_charge_at, blocked_at, suspended_reason, updated_at"
+              )
+              .in("clinic_id", clinicIds)
+          : Promise.resolve({ data: [], error: null }),
+        clinicIds.length > 0
+          ? supabase
+              .from("clinic_members")
+              .select("clinic_id, role, active")
+              .in("clinic_id", clinicIds)
+          : Promise.resolve({ data: [], error: null }),
+        clinicIds.length > 0
+          ? supabase
+              .from("tenant_feature_flags")
+              .select("clinic_id, enabled")
+              .in("clinic_id", clinicIds)
+          : Promise.resolve({ data: [], error: null }),
+      ]);
+
+      if (subscriptionsResult.error) throw subscriptionsResult.error;
+      if (membersResult.error) throw membersResult.error;
+      if (flagsResult.error) throw flagsResult.error;
+
+      const subscriptionMap = new Map<string, TenantSubscriptionRow>();
+      for (const row of subscriptionsResult.data || []) {
+        subscriptionMap.set(String(row.clinic_id), subscriptionToResponse(row as TenantSubscriptionRow));
+      }
+
+      const membersByClinic = new Map<
+        string,
+        {
+          active_members: number;
+          roles: Record<UserRole, number>;
+        }
+      >();
+      for (const member of membersResult.data || []) {
+        const clinicId = String(member.clinic_id || "");
+        if (!clinicId) continue;
+        const role = parseRole(member.role) || "secretary";
+        const bucket = membersByClinic.get(clinicId) || {
+          active_members: 0,
+          roles: { admin: 0, professional: 0, secretary: 0 },
+        };
+        if (member.active !== false) {
+          bucket.active_members += 1;
+          bucket.roles[role] += 1;
+        }
+        membersByClinic.set(clinicId, bucket);
+      }
+
+      const flagsByClinic = new Map<string, { total: number; enabled: number }>();
+      for (const flag of flagsResult.data || []) {
+        const clinicId = String(flag.clinic_id || "");
+        if (!clinicId) continue;
+        const bucket = flagsByClinic.get(clinicId) || { total: 0, enabled: 0 };
+        bucket.total += 1;
+        if (flag.enabled === true) {
+          bucket.enabled += 1;
+        }
+        flagsByClinic.set(clinicId, bucket);
+      }
+
+      const ownerMap = new Map<string, { email: string | null; full_name: string | null }>();
+      await Promise.all(
+        ownerIds.map(async (ownerUserId) => {
+          const { data, error } = await supabase.auth.admin.getUserById(ownerUserId);
+          if (error || !data?.user) {
+            ownerMap.set(ownerUserId, { email: null, full_name: null });
+            return;
+          }
+          ownerMap.set(ownerUserId, {
+            email: data.user.email || null,
+            full_name: (data.user.user_metadata?.full_name as string | undefined) || null,
+          });
+        })
+      );
+
+      const mapped = clinics
+        .map((clinic) => {
+          const clinicId = String(clinic.id);
+          const subscription = subscriptionMap.get(clinicId) || subscriptionToResponse({ clinic_id: clinicId });
+          const membersSummary = membersByClinic.get(clinicId) || {
+            active_members: 0,
+            roles: { admin: 0, professional: 0, secretary: 0 },
+          };
+          const flagsSummary = flagsByClinic.get(clinicId) || { total: 0, enabled: 0 };
+          const owner = ownerMap.get(String(clinic.owner_user_id)) || {
+            email: null,
+            full_name: null,
+          };
+
+          return {
+            id: clinicId,
+            name: String(clinic.name || ""),
+            created_at: String(clinic.created_at || ""),
+            owner_user_id: String(clinic.owner_user_id || ""),
+            owner_email: owner.email,
+            owner_full_name: owner.full_name,
+            subscription,
+            members: membersSummary,
+            features: {
+              enabled_count: flagsSummary.enabled,
+              total_count: flagsSummary.total,
+            },
+          };
+        })
+        .filter((clinic) => {
+          if (!queryText) return true;
+          const haystack = `${clinic.name} ${clinic.owner_email || ""} ${clinic.owner_full_name || ""}`.toLowerCase();
+          return haystack.includes(queryText);
+        });
+
+      res.json({
+        clinics: mapped,
+      });
+    } catch (error) {
+      try {
+        throwIfSuperadminSchemaMissing(error);
+      } catch (mappedError) {
+        handleRouteError(res, mappedError, "GET /api/superadmin/clinics");
+        return;
+      }
+      handleRouteError(res, error, "GET /api/superadmin/clinics");
+    }
+  });
+
+  app.patch("/api/superadmin/clinics/:clinicId/subscription", async (req, res) => {
+    const context = await requireSuperadminContext(req, res);
+    if (!context) return;
+
+    const clinicId = toUuidOrNull(req.params.clinicId);
+    if (!clinicId) {
+      res.status(400).json({ error: "clinicId invalido." });
+      return;
+    }
+
+    try {
+      await ensureClinicExistsOrThrow(clinicId);
+
+      const incomingStatus =
+        req.body?.status === undefined ? undefined : parseTenantStatus(req.body?.status);
+      if (req.body?.status !== undefined && !incomingStatus) {
+        res.status(400).json({
+          error: "status deve ser trialing, active, past_due, suspended ou cancelled.",
+        });
+        return;
+      }
+
+      const incomingProvider =
+        req.body?.billing_provider === undefined
+          ? undefined
+          : parseBillingProvider(req.body?.billing_provider);
+      if (req.body?.billing_provider !== undefined && !incomingProvider) {
+        res.status(400).json({ error: "billing_provider deve ser manual ou asaas." });
+        return;
+      }
+
+      const nowIso = new Date().toISOString();
+      const { data: current, error: currentError } = await supabase
+        .from("tenant_subscriptions")
+        .select(
+          "clinic_id, plan_code, status, billing_provider, asaas_customer_id, asaas_subscription_id, trial_ends_at, current_period_start, current_period_end, payment_grace_until, next_charge_at, blocked_at, suspended_reason, metadata, updated_at"
+        )
+        .eq("clinic_id", clinicId)
+        .maybeSingle();
+      if (currentError) throw currentError;
+
+      const nextStatus = incomingStatus || parseTenantStatus(current?.status) || "active";
+      const nextProvider =
+        incomingProvider || parseBillingProvider(current?.billing_provider) || "manual";
+
+      const trialEndsAt = parseOptionalDateTimeInput(req.body?.trial_ends_at, "trial_ends_at");
+      const periodStart = parseOptionalDateTimeInput(
+        req.body?.current_period_start,
+        "current_period_start"
+      );
+      const periodEnd = parseOptionalDateTimeInput(req.body?.current_period_end, "current_period_end");
+      const graceUntil = parseOptionalDateTimeInput(
+        req.body?.payment_grace_until,
+        "payment_grace_until"
+      );
+      const nextChargeAt = parseOptionalDateTimeInput(req.body?.next_charge_at, "next_charge_at");
+
+      const suspendedReason =
+        req.body?.suspended_reason === undefined
+          ? toNullableString(current?.suspended_reason)
+          : toNullableString(req.body?.suspended_reason);
+
+      const blockedAt =
+        nextStatus === "suspended" || nextStatus === "cancelled"
+          ? toNullableString(current?.blocked_at) || nowIso
+          : null;
+
+      const upsertPayload = {
+        clinic_id: clinicId,
+        plan_code: toNullableString(req.body?.plan_code) || toNullableString(current?.plan_code) || "starter",
+        status: nextStatus,
+        billing_provider: nextProvider,
+        asaas_customer_id:
+          req.body?.asaas_customer_id === undefined
+            ? toNullableString(current?.asaas_customer_id)
+            : toNullableString(req.body?.asaas_customer_id),
+        asaas_subscription_id:
+          req.body?.asaas_subscription_id === undefined
+            ? toNullableString(current?.asaas_subscription_id)
+            : toNullableString(req.body?.asaas_subscription_id),
+        trial_ends_at:
+          trialEndsAt === undefined ? toNullableString(current?.trial_ends_at) : trialEndsAt,
+        current_period_start:
+          periodStart === undefined ? toNullableString(current?.current_period_start) : periodStart,
+        current_period_end:
+          periodEnd === undefined ? toNullableString(current?.current_period_end) : periodEnd,
+        payment_grace_until:
+          graceUntil === undefined ? toNullableString(current?.payment_grace_until) : graceUntil,
+        next_charge_at:
+          nextChargeAt === undefined ? toNullableString(current?.next_charge_at) : nextChargeAt,
+        blocked_at: blockedAt,
+        suspended_reason: suspendedReason,
+        metadata:
+          req.body?.metadata && typeof req.body.metadata === "object"
+            ? req.body.metadata
+            : current?.metadata || {},
+        updated_at: nowIso,
+      };
+
+      const { data: updated, error: updateError } = await supabase
+        .from("tenant_subscriptions")
+        .upsert(upsertPayload, { onConflict: "clinic_id" })
+        .select(
+          "clinic_id, plan_code, status, billing_provider, asaas_customer_id, asaas_subscription_id, trial_ends_at, current_period_start, current_period_end, payment_grace_until, next_charge_at, blocked_at, suspended_reason, updated_at"
+        )
+        .single();
+      if (updateError) throw updateError;
+
+      await registerPlatformAuditLog({
+        actorUserId: context.userId,
+        actorType: "superadmin",
+        action: "tenant.subscription.updated",
+        targetType: "clinic",
+        targetId: clinicId,
+        clinicId,
+        metadata: {
+          status: upsertPayload.status,
+          plan_code: upsertPayload.plan_code,
+          billing_provider: upsertPayload.billing_provider,
+        },
+      });
+
+      res.json({
+        subscription: subscriptionToResponse(updated as TenantSubscriptionRow),
+      });
+    } catch (error) {
+      try {
+        throwIfSuperadminSchemaMissing(error);
+      } catch (mappedError) {
+        handleRouteError(res, mappedError, "PATCH /api/superadmin/clinics/:clinicId/subscription");
+        return;
+      }
+      handleRouteError(res, error, "PATCH /api/superadmin/clinics/:clinicId/subscription");
+    }
+  });
+
+  app.get("/api/superadmin/clinics/:clinicId/features", async (req, res) => {
+    const context = await requireSuperadminContext(req, res);
+    if (!context) return;
+
+    const clinicId = toUuidOrNull(req.params.clinicId);
+    if (!clinicId) {
+      res.status(400).json({ error: "clinicId invalido." });
+      return;
+    }
+
+    try {
+      await ensureClinicExistsOrThrow(clinicId);
+
+      const { data, error } = await supabase
+        .from("tenant_feature_flags")
+        .select("id, clinic_id, feature_key, enabled, config, created_at, updated_at")
+        .eq("clinic_id", clinicId)
+        .order("feature_key", { ascending: true });
+      if (error) throw error;
+
+      const byKey = new Map<string, Record<string, unknown>>();
+      for (const item of data || []) {
+        byKey.set(String(item.feature_key || ""), item);
+      }
+
+      const allKeys = Array.from(
+        new Set([
+          ...defaultSuperadminFeatureKeys,
+          ...(data || []).map((item) => String(item.feature_key || "")),
+        ])
+      ).filter(Boolean);
+
+      const features = allKeys.map((featureKey) => {
+        const saved = byKey.get(featureKey);
+        return {
+          clinic_id: clinicId,
+          feature_key: featureKey,
+          enabled: saved?.enabled === true,
+          config: (saved?.config as Record<string, unknown> | undefined) || {},
+          updated_at: toNullableString(saved?.updated_at),
+        };
+      });
+
+      res.json({ features });
+    } catch (error) {
+      try {
+        throwIfSuperadminSchemaMissing(error);
+      } catch (mappedError) {
+        handleRouteError(res, mappedError, "GET /api/superadmin/clinics/:clinicId/features");
+        return;
+      }
+      handleRouteError(res, error, "GET /api/superadmin/clinics/:clinicId/features");
+    }
+  });
+
+  app.put("/api/superadmin/clinics/:clinicId/features/:featureKey", async (req, res) => {
+    const context = await requireSuperadminContext(req, res);
+    if (!context) return;
+
+    const clinicId = toUuidOrNull(req.params.clinicId);
+    if (!clinicId) {
+      res.status(400).json({ error: "clinicId invalido." });
+      return;
+    }
+
+    const featureKey = normalizeFeatureKey(req.params.featureKey);
+    if (!featureKey) {
+      res.status(400).json({ error: "featureKey invalido." });
+      return;
+    }
+
+    if (typeof req.body?.enabled !== "boolean") {
+      res.status(400).json({ error: "enabled deve ser boolean." });
+      return;
+    }
+
+    if (req.body?.config !== undefined && (req.body?.config === null || typeof req.body?.config !== "object")) {
+      res.status(400).json({ error: "config deve ser um objeto JSON." });
+      return;
+    }
+
+    try {
+      await ensureClinicExistsOrThrow(clinicId);
+      const nowIso = new Date().toISOString();
+
+      const { data: existing, error: existingError } = await supabase
+        .from("tenant_feature_flags")
+        .select("id, config")
+        .eq("clinic_id", clinicId)
+        .eq("feature_key", featureKey)
+        .maybeSingle();
+      if (existingError) throw existingError;
+
+      const nextConfig =
+        req.body?.config !== undefined
+          ? (req.body.config as Record<string, unknown>)
+          : ((existing?.config as Record<string, unknown> | undefined) || {});
+
+      let saved: Record<string, unknown> | null = null;
+      if (existing?.id) {
+        const { data, error } = await supabase
+          .from("tenant_feature_flags")
+          .update({
+            enabled: req.body.enabled,
+            config: nextConfig,
+            updated_at: nowIso,
+          })
+          .eq("id", existing.id)
+          .select("clinic_id, feature_key, enabled, config, updated_at")
+          .single();
+        if (error) throw error;
+        saved = data;
+      } else {
+        const { data, error } = await supabase
+          .from("tenant_feature_flags")
+          .insert({
+            clinic_id: clinicId,
+            feature_key: featureKey,
+            enabled: req.body.enabled,
+            config: nextConfig,
+            updated_at: nowIso,
+          })
+          .select("clinic_id, feature_key, enabled, config, updated_at")
+          .single();
+        if (error) throw error;
+        saved = data;
+      }
+
+      await registerPlatformAuditLog({
+        actorUserId: context.userId,
+        actorType: "superadmin",
+        action: "tenant.feature.updated",
+        targetType: "feature_flag",
+        targetId: `${clinicId}:${featureKey}`,
+        clinicId,
+        metadata: {
+          feature_key: featureKey,
+          enabled: req.body.enabled,
+        },
+      });
+
+      res.json({
+        feature: {
+          clinic_id: clinicId,
+          feature_key: featureKey,
+          enabled: saved?.enabled === true,
+          config: (saved?.config as Record<string, unknown> | undefined) || {},
+          updated_at: toNullableString(saved?.updated_at),
+        },
+      });
+    } catch (error) {
+      try {
+        throwIfSuperadminSchemaMissing(error);
+      } catch (mappedError) {
+        handleRouteError(res, mappedError, "PUT /api/superadmin/clinics/:clinicId/features/:featureKey");
+        return;
+      }
+      handleRouteError(res, error, "PUT /api/superadmin/clinics/:clinicId/features/:featureKey");
+    }
+  });
+
+  app.delete("/api/superadmin/clinics/:clinicId/features/:featureKey", async (req, res) => {
+    const context = await requireSuperadminContext(req, res);
+    if (!context) return;
+
+    const clinicId = toUuidOrNull(req.params.clinicId);
+    if (!clinicId) {
+      res.status(400).json({ error: "clinicId invalido." });
+      return;
+    }
+
+    const featureKey = normalizeFeatureKey(req.params.featureKey);
+    if (!featureKey) {
+      res.status(400).json({ error: "featureKey invalido." });
+      return;
+    }
+
+    try {
+      await ensureClinicExistsOrThrow(clinicId);
+
+      const { error } = await supabase
+        .from("tenant_feature_flags")
+        .delete()
+        .eq("clinic_id", clinicId)
+        .eq("feature_key", featureKey);
+      if (error) throw error;
+
+      await registerPlatformAuditLog({
+        actorUserId: context.userId,
+        actorType: "superadmin",
+        action: "tenant.feature.deleted",
+        targetType: "feature_flag",
+        targetId: `${clinicId}:${featureKey}`,
+        clinicId,
+        metadata: {
+          feature_key: featureKey,
+        },
+      });
+
+      res.json({ success: true });
+    } catch (error) {
+      try {
+        throwIfSuperadminSchemaMissing(error);
+      } catch (mappedError) {
+        handleRouteError(
+          res,
+          mappedError,
+          "DELETE /api/superadmin/clinics/:clinicId/features/:featureKey"
+        );
+        return;
+      }
+      handleRouteError(res, error, "DELETE /api/superadmin/clinics/:clinicId/features/:featureKey");
+    }
+  });
+
+  app.get("/api/superadmin/audit", async (req, res) => {
+    const context = await requireSuperadminContext(req, res);
+    if (!context) return;
+
+    try {
+      const limitRaw = Number(req.query?.limit || 100);
+      const limit = Number.isFinite(limitRaw) ? Math.min(Math.max(limitRaw, 1), 300) : 100;
+      const clinicId = toUuidOrNull(req.query?.clinic_id);
+
+      let query = supabase
+        .from("platform_audit_logs")
+        .select("id, actor_user_id, actor_type, action, target_type, target_id, clinic_id, metadata, created_at")
+        .order("created_at", { ascending: false })
+        .limit(limit);
+      if (clinicId) {
+        query = query.eq("clinic_id", clinicId);
+      }
+
+      const { data, error } = await query;
+      if (error) throw error;
+
+      res.json({
+        logs: data || [],
+      });
+    } catch (error) {
+      try {
+        throwIfSuperadminSchemaMissing(error);
+      } catch (mappedError) {
+        handleRouteError(res, mappedError, "GET /api/superadmin/audit");
+        return;
+      }
+      handleRouteError(res, error, "GET /api/superadmin/audit");
+    }
   });
 
   app.get("/api/clinic/members", async (req, res) => {

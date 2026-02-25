@@ -21,6 +21,8 @@ Aplicacao full-stack (React + Express) para operacao de clinica: pacientes, agen
    - `supabase/migrations/20260221_003_google_agenda_notes_source.sql`
    - `supabase/migrations/20260221_004_financial_monthly_asaas_settings.sql`
    - `supabase/migrations/20260222_005_ai_usage_meter.sql`
+   - `supabase/migrations/20260224_006_patient_linkage_guardrails.sql`
+   - `supabase/migrations/20260225_007_superadmin_platform_foundation.sql`
 4. Rode a aplicacao:
    - `npm run dev`
 
@@ -61,6 +63,7 @@ Aplicacao full-stack (React + Express) para operacao de clinica: pacientes, agen
 3. Criar `.env.production` a partir de `.env.production.example`.
 4. Definir dominio no DNS apontando para a VPS.
 5. Garantir que `VITE_SUPABASE_URL` e `VITE_SUPABASE_ANON_KEY` estejam preenchidas (usadas no build do frontend).
+6. Definir tambem `ADMIN_URL`, `SUPERADMIN_ALLOWED_HOSTS`, `SUPERADMIN_BOOTSTRAP_USER_IDS` e `VITE_SUPERADMIN_DOMAINS` para habilitar o portal de superadmin em dominio separado.
 
 ### 2. Subir stack
 
@@ -69,6 +72,10 @@ Aplicacao full-stack (React + Express) para operacao de clinica: pacientes, agen
 Servicos:
 - `app`: API + frontend
 - `caddy`: reverse proxy com HTTPS automatico
+
+Dominios:
+- `APP_URL` (portal da clinica)
+- `ADMIN_URL` (portal superadmin, ex: `adminpsi.gccsoftware.com.br`)
 
 ### 3. Healthcheck e operacao
 

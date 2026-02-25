@@ -640,7 +640,7 @@ export const Settings = ({
             </h3>
           </div>
           <p className="text-sm text-slate-500">
-            Controle os perfis de acesso: admin, professional e secretary.
+            Controle os perfis de acesso: administrador, profissional e secretaria.
           </p>
 
           <form onSubmit={handleInviteMember} className="grid grid-cols-1 md:grid-cols-4 gap-4">
@@ -662,9 +662,9 @@ export const Settings = ({
               }
               className="apple-input appearance-none"
             >
-              <option value="secretary">secretary</option>
-              <option value="professional">professional</option>
-              <option value="admin">admin</option>
+              <option value="secretary">Secretaria</option>
+              <option value="professional">Profissional</option>
+              <option value="admin">Administrador</option>
             </select>
             <button
               type="submit"
@@ -706,9 +706,9 @@ export const Settings = ({
                     }
                     className="apple-input appearance-none min-w-[150px]"
                   >
-                    <option value="secretary">secretary</option>
-                    <option value="professional">professional</option>
-                    <option value="admin">admin</option>
+                    <option value="secretary">Secretaria</option>
+                    <option value="professional">Profissional</option>
+                    <option value="admin">Administrador</option>
                   </select>
 
                   <label className="inline-flex items-center gap-2 text-sm text-slate-600">

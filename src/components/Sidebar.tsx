@@ -32,15 +32,15 @@ export const Sidebar = ({
 }: SidebarProps) => {
   const clinicalItems = [
     { id: "dashboard", label: "Painel", icon: LayoutDashboard },
-    { id: "record", label: "Nova Sessão", icon: Mic },
+    { id: "record", label: "Nova Sessao", icon: Mic },
   ];
 
   const operationalItems = [
     { id: "patients", label: "Pacientes", icon: Users },
     { id: "agenda", label: "Agenda", icon: CalendarDays },
     { id: "financial", label: "Financeiro", icon: Wallet },
-    { id: "settings", label: "Configurações", icon: Settings },
-    { id: "help", label: "Ajuda & LGPD", icon: HelpCircle },
+    { id: "settings", label: "Configuracoes", icon: Settings },
+    { id: "help", label: "Ajuda e LGPD", icon: HelpCircle },
   ];
 
   const menuItems = role === "secretary" ? operationalItems : [...clinicalItems, ...operationalItems];

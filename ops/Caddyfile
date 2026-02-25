@@ -1,4 +1,4 @@
-{$APP_URL:https://localhost} {
+{$APP_URL:https://localhost}, {$ADMIN_URL:https://admin.localhost} {
   encode gzip zstd
 
   reverse_proxy app:3000

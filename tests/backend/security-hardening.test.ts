@@ -433,6 +433,156 @@ describe("webhook token validation when configured", () => {
   });
 });
 
+describe("superadmin authorization and tenant control", () => {
+  it("denies superadmin endpoint for non-superadmin user", async () => {
+    const { app } = await createTestApp({
+      env: {
+        NODE_ENV: "development",
+        ALLOW_DEV_USER_BYPASS: "true",
+      },
+      seed: {
+        platform_superadmins: [],
+      },
+    });
+
+    const response = await request(app).get("/api/superadmin/me").set("x-user-id", "common-user");
+    expect(response.status).toBe(403);
+    expect(String(response.body?.error || "")).toContain("superadmin");
+  });
+
+  it("returns overview for authorized superadmin user", async () => {
+    const { app } = await createTestApp({
+      env: {
+        NODE_ENV: "development",
+        ALLOW_DEV_USER_BYPASS: "true",
+      },
+      seed: {
+        platform_superadmins: [
+          {
+            user_id: "sa-user",
+            active: true,
+          },
+        ],
+        clinics: [
+          {
+            id: "clinic-1",
+            name: "Clinica A",
+            owner_user_id: "owner-a",
+            created_at: "2026-02-01T00:00:00.000Z",
+          },
+          {
+            id: "clinic-2",
+            name: "Clinica B",
+            owner_user_id: "owner-b",
+            created_at: "2026-02-02T00:00:00.000Z",
+          },
+        ],
+        tenant_subscriptions: [
+          {
+            clinic_id: "clinic-1",
+            status: "active",
+          },
+          {
+            clinic_id: "clinic-2",
+            status: "suspended",
+          },
+        ],
+        clinic_members: [
+          {
+            id: 1,
+            clinic_id: "clinic-1",
+            user_id: "owner-a",
+            role: "admin",
+            active: true,
+          },
+          {
+            id: 2,
+            clinic_id: "clinic-2",
+            user_id: "owner-b",
+            role: "admin",
+            active: true,
+          },
+        ],
+      },
+    });
+
+    const response = await request(app)
+      .get("/api/superadmin/dashboard/overview")
+      .set("x-user-id", "sa-user");
+    expect(response.status).toBe(200);
+    expect(response.body?.totals?.clinics_total).toBe(2);
+    expect(response.body?.totals?.active).toBe(1);
+    expect(response.body?.totals?.suspended).toBe(1);
+    expect(response.body?.totals?.blocked).toBe(1);
+  });
+});
+
+describe("tenant subscription access lock", () => {
+  it("blocks clinic access when tenant status is suspended", async () => {
+    const { app } = await createTestApp({
+      env: {
+        NODE_ENV: "development",
+        ALLOW_DEV_USER_BYPASS: "true",
+      },
+      seed: {
+        clinic_members: [
+          {
+            id: 1,
+            clinic_id: "clinic-1",
+            user_id: "pro-user",
+            role: "professional",
+            active: true,
+            created_at: "2026-02-01T00:00:00.000Z",
+          },
+        ],
+        tenant_subscriptions: [
+          {
+            clinic_id: "clinic-1",
+            status: "suspended",
+            suspended_reason: "inadimplencia",
+          },
+        ],
+      },
+    });
+
+    const response = await request(app).get("/api/me").set("x-user-id", "pro-user");
+    expect(response.status).toBe(403);
+    expect(String(response.body?.error || "")).toContain("inadimplencia");
+  });
+
+  it("allows clinic access on past_due while grace period is valid", async () => {
+    const { app } = await createTestApp({
+      env: {
+        NODE_ENV: "development",
+        ALLOW_DEV_USER_BYPASS: "true",
+      },
+      seed: {
+        clinic_members: [
+          {
+            id: 1,
+            clinic_id: "clinic-1",
+            user_id: "pro-user",
+            role: "professional",
+            active: true,
+            created_at: "2026-02-01T00:00:00.000Z",
+          },
+        ],
+        tenant_subscriptions: [
+          {
+            clinic_id: "clinic-1",
+            status: "past_due",
+            payment_grace_until: "2099-02-01T00:00:00.000Z",
+          },
+        ],
+      },
+    });
+
+    const response = await request(app).get("/api/me").set("x-user-id", "pro-user");
+    expect(response.status).toBe(200);
+    expect(response.body?.clinic_id).toBe("clinic-1");
+  });
+});
+
 describe("RBAC for secretary", () => {
   let app: Awaited<ReturnType<(typeof import("../../server"))["createApp"]>>;
 
