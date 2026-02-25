@@ -189,6 +189,7 @@ export const SuperAdminApp = () => {
   const [loading, setLoading] = useState(false);
   const [loadingFeatures, setLoadingFeatures] = useState(false);
   const [savingSubscription, setSavingSubscription] = useState(false);
+  const [syncingAsaas, setSyncingAsaas] = useState(false);
   const [savingFeatureKey, setSavingFeatureKey] = useState<string | null>(null);
   const [portalError, setPortalError] = useState<string | null>(null);
   const [toast, setToast] = useState<{ type: "success" | "error" | "info"; message: string } | null>(
@@ -452,6 +453,28 @@ export const SuperAdminApp = () => {
     }
   };
 
+  const handleSyncAsaasSubscription = async () => {
+    if (!selectedClinicId || !accessToken) return;
+
+    setSyncingAsaas(true);
+    try {
+      await apiRequest(
+        `/api/superadmin/clinics/${selectedClinicId}/asaas/sync-subscription`,
+        accessToken,
+        { method: "POST" }
+      );
+      await Promise.all([loadOverview(), loadClinics(), loadAudit()]);
+      setToast({ type: "success", message: "Assinatura sincronizada com Asaas." });
+    } catch (error) {
+      console.error("Failed to sync Asaas subscription", error);
+      const message =
+        error instanceof ApiError ? error.message : "Falha ao sincronizar assinatura no Asaas.";
+      setToast({ type: "error", message });
+    } finally {
+      setSyncingAsaas(false);
+    }
+  };
+
   const handleSignOut = async () => {
     await supabase.auth.signOut();
     setSession(null);
@@ -640,13 +663,13 @@ export const SuperAdminApp = () => {
                   <div>
                     <h2 className="text-2xl font-bold text-[#1A1A1A]">{selectedClinic.name}</h2>
                     <p className="text-sm text-slate-500 mt-1">
-                      Criada em {toLocalDateTime(selectedClinic.created_at)} • Owner: {selectedClinic.owner_email || selectedClinic.owner_user_id}
+                      Criada em {toLocalDateTime(selectedClinic.created_at)} â€¢ Owner: {selectedClinic.owner_email || selectedClinic.owner_user_id}
                     </p>
                   </div>
                   <div className="text-right text-sm">
                     <p className="font-semibold text-[#1A1A1A]">Membros ativos: {selectedClinic.members.active_members}</p>
                     <p className="text-slate-500">
-                      Admin {selectedClinic.members.roles.admin} • Profissionais {selectedClinic.members.roles.professional} • Secretaria {selectedClinic.members.roles.secretary}
+                      Admin {selectedClinic.members.roles.admin} â€¢ Profissionais {selectedClinic.members.roles.professional} â€¢ Secretaria {selectedClinic.members.roles.secretary}
                     </p>
                   </div>
                 </div>
@@ -806,13 +829,23 @@ export const SuperAdminApp = () => {
                       />
                     </label>
 
-                    <button
-                      type="submit"
-                      disabled={savingSubscription}
-                      className="bg-petroleum text-white px-5 py-3 rounded-xl font-semibold disabled:opacity-60 flex items-center gap-2"
-                    >
-                      <Save size={16} /> {savingSubscription ? "Salvando..." : "Salvar assinatura"}
-                    </button>
+                    <div className="flex items-center gap-2">
+                      <button
+                        type="button"
+                        onClick={handleSyncAsaasSubscription}
+                        disabled={syncingAsaas}
+                        className="border border-petroleum/30 text-petroleum px-4 py-3 rounded-xl font-semibold disabled:opacity-60"
+                      >
+                        {syncingAsaas ? "Sincronizando..." : "Sincronizar Asaas"}
+                      </button>
+                      <button
+                        type="submit"
+                        disabled={savingSubscription}
+                        className="bg-petroleum text-white px-5 py-3 rounded-xl font-semibold disabled:opacity-60 flex items-center gap-2"
+                      >
+                        <Save size={16} /> {savingSubscription ? "Salvando..." : "Salvar assinatura"}
+                      </button>
+                    </div>
                   </div>
 
                   <label className="text-sm space-y-1 block">
@@ -899,7 +932,7 @@ export const SuperAdminApp = () => {
                         <div key={log.id} className="border border-slate-200 rounded-xl p-3 text-sm">
                           <p className="font-semibold text-[#1A1A1A]">{log.action}</p>
                           <p className="text-xs text-slate-500 mt-1">
-                            {toLocalDateTime(log.created_at)} • {log.actor_type}
+                            {toLocalDateTime(log.created_at)} â€¢ {log.actor_type}
                           </p>
                           <p className="text-xs text-slate-500 mt-1 break-all">
                             alvo: {log.target_type} {log.target_id || "-"}

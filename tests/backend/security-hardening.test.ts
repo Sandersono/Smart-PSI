@@ -517,6 +517,137 @@ describe("superadmin authorization and tenant control", () => {
   });
 });
 
+describe("tenant subscription Asaas sync", () => {
+  it("reconciles tenant subscription status from Asaas webhook payload", async () => {
+    const clinicId = "11111111-1111-4111-8111-111111111111";
+    const { app, db } = await createTestApp({
+      env: {
+        NODE_ENV: "production",
+        FEATURE_ASAAS_ENABLED: "true",
+        ASAAS_WEBHOOK_TOKEN: "asaas-secret-token",
+      },
+      seed: {
+        clinics: [
+          {
+            id: clinicId,
+            name: "Clinica SaaS",
+            owner_user_id: "owner-sa",
+            created_at: "2026-02-01T00:00:00.000Z",
+          },
+        ],
+        tenant_subscriptions: [
+          {
+            clinic_id: clinicId,
+            status: "active",
+            billing_provider: "manual",
+            asaas_customer_id: "cus_1",
+            asaas_subscription_id: "sub_1",
+            plan_code: "starter",
+          },
+        ],
+      },
+    });
+
+    const response = await request(app)
+      .post("/api/asaas/webhook")
+      .set("x-asaas-token", "asaas-secret-token")
+      .send({
+        event: "SUBSCRIPTION_OVERDUE",
+        subscription: {
+          id: "sub_1",
+          status: "OVERDUE",
+          customer: "cus_1",
+          nextDueDate: "2026-03-20",
+        },
+      });
+
+    expect(response.status).toBe(200);
+    expect(response.body?.tenant_subscription?.clinic_id).toBe(clinicId);
+    expect(response.body?.tenant_subscription?.status).toBe("past_due");
+
+    expect(db.tenant_subscriptions[0]).toMatchObject({
+      clinic_id: clinicId,
+      status: "past_due",
+      billing_provider: "asaas",
+      asaas_customer_id: "cus_1",
+      asaas_subscription_id: "sub_1",
+    });
+  });
+
+  it("syncs tenant subscription from Asaas on superadmin endpoint", async () => {
+    const clinicId = "22222222-2222-4222-8222-222222222222";
+    const fetchMock = vi.fn(async (input: string | URL) => {
+      const url = String(input);
+      if (url.includes("/subscriptions/sub_sync_1")) {
+        return new Response(
+          JSON.stringify({
+            id: "sub_sync_1",
+            status: "ACTIVE",
+            customer: "cus_sync_1",
+            nextDueDate: "2026-03-30",
+          }),
+          {
+            status: 200,
+            headers: { "content-type": "application/json" },
+          }
+        );
+      }
+      return new Response(JSON.stringify({}), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      });
+    });
+    vi.stubGlobal("fetch", fetchMock as typeof fetch);
+
+    const { app, db } = await createTestApp({
+      env: {
+        NODE_ENV: "development",
+        ALLOW_DEV_USER_BYPASS: "true",
+        FEATURE_ASAAS_ENABLED: "true",
+        ASAAS_API_KEY: "asaas-test-key",
+      },
+      seed: {
+        platform_superadmins: [
+          {
+            user_id: "sa-user",
+            active: true,
+          },
+        ],
+        clinics: [
+          {
+            id: clinicId,
+            name: "Clinica Sync",
+            owner_user_id: "owner-sync",
+            created_at: "2026-02-01T00:00:00.000Z",
+          },
+        ],
+        tenant_subscriptions: [
+          {
+            clinic_id: clinicId,
+            status: "past_due",
+            billing_provider: "asaas",
+            asaas_customer_id: "cus_sync_1",
+            asaas_subscription_id: "sub_sync_1",
+            plan_code: "starter",
+          },
+        ],
+      },
+    });
+
+    const response = await request(app)
+      .post(`/api/superadmin/clinics/${clinicId}/asaas/sync-subscription`)
+      .set("x-user-id", "sa-user")
+      .send({});
+
+    expect(response.status).toBe(200);
+    expect(response.body?.subscription?.status).toBe("active");
+    expect(response.body?.asaas?.id).toBe("sub_sync_1");
+    expect(db.tenant_subscriptions[0]?.status).toBe("active");
+
+    vi.unstubAllGlobals();
+  });
+});
+
 describe("tenant subscription access lock", () => {
   it("blocks clinic access when tenant status is suspended", async () => {
     const { app } = await createTestApp({

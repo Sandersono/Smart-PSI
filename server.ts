@@ -1413,6 +1413,203 @@ function normalizeAsaasChargeStatus(value: unknown) {
   return String(value || "").trim().toUpperCase();
 }
 
+function normalizeAsaasTenantStatus(rawStatus: unknown, eventName?: string | null): TenantStatus | null {
+  const status = normalizeAsaasChargeStatus(rawStatus);
+  if (status === "ACTIVE" || status === "RECEIVED" || status === "CONFIRMED") return "active";
+  if (status === "TRIAL" || status === "PENDING") return "trialing";
+  if (status === "OVERDUE" || status === "LATE") return "past_due";
+  if (status === "SUSPENDED") return "suspended";
+  if (status === "INACTIVE" || status === "EXPIRED" || status === "CANCELLED") return "cancelled";
+
+  const event = String(eventName || "").toUpperCase();
+  if (!event) return null;
+  if (event.includes("OVERDUE")) return "past_due";
+  if (event.includes("SUSPEND")) return "suspended";
+  if (event.includes("RESTOR") || event.includes("REACTIV") || event.includes("ACTIV")) return "active";
+  if (event.includes("CANCEL") || event.includes("DELETE") || event.includes("EXPIRE")) return "cancelled";
+  return null;
+}
+
+function extractIdString(value: unknown) {
+  if (typeof value === "string") {
+    const trimmed = value.trim();
+    return trimmed.length > 0 ? trimmed : null;
+  }
+  if (value && typeof value === "object") {
+    return toNullableString((value as Record<string, unknown>).id);
+  }
+  return null;
+}
+
+function asRecord(value: unknown): Record<string, unknown> {
+  return value && typeof value === "object" ? (value as Record<string, unknown>) : {};
+}
+
+function addDaysToDateOnlyIso(dateOnly: string, days: number) {
+  const parsed = toDateOnly(dateOnly);
+  if (!parsed) return null;
+  const [year, month, day] = parsed.split("-").map(Number);
+  const date = new Date(Date.UTC(year, month - 1, day, 23, 59, 59, 999));
+  date.setUTCDate(date.getUTCDate() + days);
+  return date.toISOString();
+}
+
+type AsaasTenantReconcileResult = {
+  handled: boolean;
+  clinicId: string | null;
+  asaasSubscriptionId: string | null;
+  status: TenantStatus | null;
+};
+
+async function reconcileTenantSubscriptionFromAsaasWebhook(
+  payload: Record<string, unknown>,
+  eventName?: string | null
+): Promise<AsaasTenantReconcileResult> {
+  const subscriptionPayload = asRecord(payload.subscription);
+  const paymentPayload = asRecord(payload.payment);
+
+  const asaasSubscriptionId =
+    extractIdString(subscriptionPayload) ||
+    extractIdString(paymentPayload.subscription) ||
+    toNullableString(payload.subscription_id);
+  const asaasCustomerId =
+    extractIdString(subscriptionPayload.customer) ||
+    extractIdString(paymentPayload.customer) ||
+    extractIdString(payload.customer);
+  const rawStatus =
+    toNullableString(subscriptionPayload.status) ||
+    toNullableString(payload.status) ||
+    toNullableString(paymentPayload.status);
+  const nextDueDate = toDateOnly(
+    subscriptionPayload.nextDueDate ||
+      subscriptionPayload.next_due_date ||
+      payload.nextDueDate ||
+      payload.next_due_date
+  );
+  const cancellationReason =
+    toNullableString(subscriptionPayload.cancellationReason) ||
+    toNullableString(subscriptionPayload.reason) ||
+    toNullableString(payload.reason);
+
+  if (!asaasSubscriptionId && !asaasCustomerId) {
+    return { handled: false, clinicId: null, asaasSubscriptionId: null, status: null };
+  }
+  try {
+    let target: Record<string, unknown> | null = null;
+
+    if (asaasSubscriptionId) {
+      const { data, error } = await supabase
+        .from("tenant_subscriptions")
+        .select(
+          "clinic_id, status, billing_provider, asaas_customer_id, asaas_subscription_id, payment_grace_until, blocked_at, suspended_reason, metadata"
+        )
+        .eq("asaas_subscription_id", asaasSubscriptionId)
+        .maybeSingle();
+      if (error) throw error;
+      target = data || null;
+    }
+
+    if (!target && asaasCustomerId) {
+      const { data, error } = await supabase
+        .from("tenant_subscriptions")
+        .select(
+          "clinic_id, status, billing_provider, asaas_customer_id, asaas_subscription_id, payment_grace_until, blocked_at, suspended_reason, metadata"
+        )
+        .eq("asaas_customer_id", asaasCustomerId)
+        .maybeSingle();
+      if (error) throw error;
+      target = data || null;
+    }
+
+    if (!target) {
+      return {
+        handled: false,
+        clinicId: null,
+        asaasSubscriptionId: asaasSubscriptionId || null,
+        status: null,
+      };
+    }
+
+    const currentStatus = parseTenantStatus(target.status) || "active";
+    const mappedStatus = normalizeAsaasTenantStatus(rawStatus, eventName) || currentStatus;
+    const nowIso = new Date().toISOString();
+    const nextDueIso = nextDueDate ? `${nextDueDate}T00:00:00.000Z` : null;
+    const graceUntil =
+      mappedStatus === "past_due"
+        ? addDaysToDateOnlyIso(nextDueDate || new Date().toISOString().slice(0, 10), 7) ||
+          toNullableString(target.payment_grace_until)
+        : null;
+
+    const metadataBase =
+      target.metadata && typeof target.metadata === "object"
+        ? (target.metadata as Record<string, unknown>)
+        : {};
+    const metadata = {
+      ...metadataBase,
+      last_asaas_webhook_event: toNullableString(eventName) || null,
+      last_asaas_raw_status: rawStatus || null,
+      last_asaas_webhook_at: nowIso,
+    };
+
+    const { error: updateError } = await supabase
+      .from("tenant_subscriptions")
+      .update({
+        status: mappedStatus,
+        billing_provider: "asaas",
+        asaas_subscription_id:
+          asaasSubscriptionId || toNullableString(target.asaas_subscription_id),
+        asaas_customer_id: asaasCustomerId || toNullableString(target.asaas_customer_id),
+        current_period_end: nextDueIso || undefined,
+        next_charge_at: nextDueIso || undefined,
+        payment_grace_until: graceUntil,
+        blocked_at:
+          mappedStatus === "suspended" || mappedStatus === "cancelled"
+            ? toNullableString(target.blocked_at) || nowIso
+            : null,
+        suspended_reason:
+          mappedStatus === "suspended" || mappedStatus === "cancelled"
+            ? cancellationReason || toNullableString(target.suspended_reason)
+            : null,
+        metadata,
+        updated_at: nowIso,
+      })
+      .eq("clinic_id", String(target.clinic_id));
+    if (updateError) throw updateError;
+
+    await registerPlatformAuditLog({
+      actorUserId: null,
+      actorType: "system",
+      action: "tenant.subscription.reconciled_from_asaas",
+      targetType: "clinic",
+      targetId: String(target.clinic_id),
+      clinicId: String(target.clinic_id),
+      metadata: {
+        event: toNullableString(eventName) || null,
+        asaas_subscription_id: asaasSubscriptionId || toNullableString(target.asaas_subscription_id),
+        mapped_status: mappedStatus,
+      },
+    });
+
+    return {
+      handled: true,
+      clinicId: String(target.clinic_id),
+      asaasSubscriptionId:
+        asaasSubscriptionId || toNullableString(target.asaas_subscription_id),
+      status: mappedStatus,
+    };
+  } catch (error) {
+    if (isMissingRelationError(error)) {
+      return {
+        handled: false,
+        clinicId: null,
+        asaasSubscriptionId: asaasSubscriptionId || null,
+        status: null,
+      };
+    }
+    throw error;
+  }
+}
+
 function asaasChargeToFinancialStatus(statusRaw: unknown): "paid" | "pending" {
   const status = normalizeAsaasChargeStatus(statusRaw);
   if (
@@ -2451,6 +2648,88 @@ function throwIfSuperadminSchemaMissing(error: unknown) {
   }
 }
 
+async function syncTenantSubscriptionFromAsaas(clinicId: string) {
+  const { data: current, error: currentError } = await supabase
+    .from("tenant_subscriptions")
+    .select(
+      "clinic_id, plan_code, status, billing_provider, asaas_customer_id, asaas_subscription_id, trial_ends_at, current_period_start, current_period_end, payment_grace_until, next_charge_at, blocked_at, suspended_reason, metadata, updated_at"
+    )
+    .eq("clinic_id", clinicId)
+    .maybeSingle();
+  if (currentError) throw currentError;
+  if (!current) {
+    throw new HttpError(404, "Assinatura da clinica nao encontrada.");
+  }
+
+  const asaasSubscriptionId = toNullableString(current.asaas_subscription_id);
+  if (!asaasSubscriptionId) {
+    throw new HttpError(400, "Clinica sem asaas_subscription_id configurado.");
+  }
+
+  const payload = await asaasRequest(`/subscriptions/${encodeURIComponent(asaasSubscriptionId)}`, {
+    method: "GET",
+  });
+  const rawStatus = toNullableString(payload?.status);
+  const mappedStatus =
+    normalizeAsaasTenantStatus(rawStatus) || parseTenantStatus(current.status) || "active";
+  const nextDueDate = toDateOnly(payload?.nextDueDate || payload?.next_due_date);
+  const nextDueIso = nextDueDate ? `${nextDueDate}T00:00:00.000Z` : null;
+  const nowIso = new Date().toISOString();
+
+  const paymentGraceUntil =
+    mappedStatus === "past_due"
+      ? addDaysToDateOnlyIso(nextDueDate || nowIso.slice(0, 10), 7) ||
+        toNullableString(current.payment_grace_until)
+      : null;
+
+  const metadataBase =
+    current.metadata && typeof current.metadata === "object"
+      ? (current.metadata as Record<string, unknown>)
+      : {};
+  const metadata = {
+    ...metadataBase,
+    last_asaas_subscription_sync_at: nowIso,
+    last_asaas_subscription_status_raw: rawStatus || null,
+  };
+
+  const { data: updated, error: updateError } = await supabase
+    .from("tenant_subscriptions")
+    .update({
+      status: mappedStatus,
+      billing_provider: "asaas",
+      asaas_subscription_id: asaasSubscriptionId,
+      asaas_customer_id: toNullableString(payload?.customer) || toNullableString(current.asaas_customer_id),
+      current_period_end: nextDueIso || undefined,
+      next_charge_at: nextDueIso || undefined,
+      payment_grace_until: paymentGraceUntil,
+      blocked_at:
+        mappedStatus === "suspended" || mappedStatus === "cancelled"
+          ? toNullableString(current.blocked_at) || nowIso
+          : null,
+      suspended_reason:
+        mappedStatus === "suspended" || mappedStatus === "cancelled"
+          ? toNullableString(payload?.reason) || toNullableString(current.suspended_reason)
+          : null,
+      metadata,
+      updated_at: nowIso,
+    })
+    .eq("clinic_id", clinicId)
+    .select(
+      "clinic_id, plan_code, status, billing_provider, asaas_customer_id, asaas_subscription_id, trial_ends_at, current_period_start, current_period_end, payment_grace_until, next_charge_at, blocked_at, suspended_reason, updated_at"
+    )
+    .single();
+  if (updateError) throw updateError;
+
+  return {
+    subscription: subscriptionToResponse(updated as TenantSubscriptionRow),
+    asaas: {
+      id: toNullableString(payload?.id) || asaasSubscriptionId,
+      status: rawStatus,
+      next_due_date: nextDueDate,
+    },
+  };
+}
+
 type CreateAppOptions = {
   includeFrontend?: boolean;
 };
@@ -2969,6 +3248,49 @@ export async function createApp(options: CreateAppOptions = {}) {
         return;
       }
       handleRouteError(res, error, "PATCH /api/superadmin/clinics/:clinicId/subscription");
+    }
+  });
+
+  app.post("/api/superadmin/clinics/:clinicId/asaas/sync-subscription", async (req, res) => {
+    const context = await requireSuperadminContext(req, res);
+    if (!context) return;
+
+    const clinicId = toUuidOrNull(req.params.clinicId);
+    if (!clinicId) {
+      res.status(400).json({ error: "clinicId invalido." });
+      return;
+    }
+
+    try {
+      await ensureClinicExistsOrThrow(clinicId);
+      const result = await syncTenantSubscriptionFromAsaas(clinicId);
+
+      await registerPlatformAuditLog({
+        actorUserId: context.userId,
+        actorType: "superadmin",
+        action: "tenant.subscription.synced_from_asaas",
+        targetType: "clinic",
+        targetId: clinicId,
+        clinicId,
+        metadata: {
+          asaas_subscription_id: result.subscription.asaas_subscription_id,
+          status: result.subscription.status,
+        },
+      });
+
+      res.json(result);
+    } catch (error) {
+      try {
+        throwIfSuperadminSchemaMissing(error);
+      } catch (mappedError) {
+        handleRouteError(
+          res,
+          mappedError,
+          "POST /api/superadmin/clinics/:clinicId/asaas/sync-subscription"
+        );
+        return;
+      }
+      handleRouteError(res, error, "POST /api/superadmin/clinics/:clinicId/asaas/sync-subscription");
     }
   });
 
@@ -5532,12 +5854,29 @@ export async function createApp(options: CreateAppOptions = {}) {
 
       const payload = req.body ?? {};
       const event = toNullableString(payload.event) || "unknown";
+      const tenantReconcile = await reconcileTenantSubscriptionFromAsaasWebhook(
+        payload as Record<string, unknown>,
+        event
+      );
       const payment = payload.payment && typeof payload.payment === "object" ? payload.payment : {};
       const chargeId = toNullableString(payment.id) || toNullableString(payload.id);
       const status = toNullableString(payment.status) || toNullableString(payload.status);
       const dueDate = toDateOnly(payment.dueDate || payment.due_date || payload.dueDate);
 
       if (!chargeId) {
+        if (tenantReconcile.handled) {
+          res.json({
+            success: true,
+            event,
+            charge_synced: false,
+            tenant_subscription: {
+              clinic_id: tenantReconcile.clinicId,
+              asaas_subscription_id: tenantReconcile.asaasSubscriptionId,
+              status: tenantReconcile.status,
+            },
+          });
+          return;
+        }
         res.status(202).json({ accepted: true, reason: "Missing charge id" });
         return;
       }
@@ -5550,6 +5889,20 @@ export async function createApp(options: CreateAppOptions = {}) {
       if (existingError) throw existingError;
 
       if (!existing) {
+        if (tenantReconcile.handled) {
+          res.json({
+            success: true,
+            event,
+            charge_id: chargeId,
+            charge_synced: false,
+            tenant_subscription: {
+              clinic_id: tenantReconcile.clinicId,
+              asaas_subscription_id: tenantReconcile.asaasSubscriptionId,
+              status: tenantReconcile.status,
+            },
+          });
+          return;
+        }
         res.status(202).json({ accepted: true, reason: "Charge not tracked locally" });
         return;
       }
@@ -5572,7 +5925,19 @@ export async function createApp(options: CreateAppOptions = {}) {
         dueDate || toNullableString(existing.due_date)
       );
 
-      res.json({ success: true, event, charge_id: chargeId });
+      res.json({
+        success: true,
+        event,
+        charge_id: chargeId,
+        charge_synced: true,
+        tenant_subscription: tenantReconcile.handled
+          ? {
+              clinic_id: tenantReconcile.clinicId,
+              asaas_subscription_id: tenantReconcile.asaasSubscriptionId,
+              status: tenantReconcile.status,
+            }
+          : null,
+      });
     } catch (error) {
       handleRouteError(res, error, "POST /api/asaas/webhook");
     }
