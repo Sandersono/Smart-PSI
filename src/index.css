@@ -1,42 +1,44 @@
+@import url("https://fonts.googleapis.com/css2?family=Sora:wght@400;500;600;700;800&display=swap");
 @import "tailwindcss";
 
 @theme {
-  --font-sans: "Inter", ui-sans-serif, system-ui, sans-serif;
-  --color-petroleum: #0B5B6E;
-  --color-success: #2BB673;
-  --color-warning: #F4D35E;
-  --color-error: #E05A5A;
-  --color-glass: rgba(255, 255, 255, 0.4);
-  --color-glass-dark: rgba(18, 32, 40, 0.05);
+  --font-sans: "Sora", ui-sans-serif, system-ui, sans-serif;
+  --color-petroleum: #4a90e2;
+  --color-success: #6abf69;
+  --color-warning: #f5a623;
+  --color-error: #e05d5d;
+  --color-glass: rgba(255, 255, 255, 0.72);
+  --color-glass-dark: rgba(58, 58, 60, 0.1);
 }
 
 @layer base {
   body {
-    @apply bg-[#F2F2F7] text-[#1C1C1E] font-sans antialiased;
-    background-image: 
-      radial-gradient(at 0% 0%, rgba(11, 91, 110, 0.05) 0px, transparent 50%),
-      radial-gradient(at 100% 0%, rgba(43, 182, 115, 0.05) 0px, transparent 50%);
+    @apply text-[#1A1A1A] font-sans antialiased;
+    background-image:
+      radial-gradient(at 0% 0%, rgba(74, 144, 226, 0.14) 0px, transparent 46%),
+      radial-gradient(at 100% 100%, rgba(106, 191, 105, 0.1) 0px, transparent 40%),
+      linear-gradient(160deg, #f7f8fa 0%, #ffffff 60%, #f7f8fa 100%);
   }
 }
 
 @layer components {
   .glass-panel {
-    @apply bg-white/60 backdrop-blur-2xl border border-white/40 shadow-[0_8px_32px_0_rgba(31,38,135,0.07)] rounded-[2rem];
+    @apply bg-white/70 backdrop-blur-2xl border border-[#3A3A3C]/10 shadow-[0_10px_30px_0_rgba(26,26,26,0.08)] rounded-[2rem];
   }
   
   .glass-card {
-    @apply bg-white/40 backdrop-blur-xl border border-white/60 shadow-sm rounded-2xl transition-all duration-300 hover:shadow-md hover:bg-white/60;
+    @apply bg-white/60 backdrop-blur-xl border border-[#3A3A3C]/10 shadow-sm rounded-2xl transition-all duration-300 hover:shadow-md hover:bg-white/80;
   }
 
   .apple-input {
-    @apply bg-white/50 backdrop-blur-sm border border-black/5 rounded-xl px-4 py-3 outline-none focus:ring-2 focus:ring-petroleum/20 focus:border-petroleum/30 transition-all;
+    @apply bg-white/70 backdrop-blur-sm border border-[#3A3A3C]/20 rounded-xl px-4 py-3 outline-none focus:ring-2 focus:ring-petroleum/25 focus:border-petroleum/50 transition-all;
   }
 
   .nav-item {
-    @apply flex items-center gap-3 px-4 py-3 rounded-xl transition-all text-slate-500 hover:bg-white/50 hover:text-petroleum;
+    @apply flex items-center gap-3 px-4 py-3 rounded-xl transition-all text-slate-100 hover:bg-white/12 hover:text-white;
   }
 
   .nav-item-active {
-    @apply bg-white shadow-sm text-petroleum font-medium;
+    @apply bg-white/18 text-white font-semibold;
   }
 }
