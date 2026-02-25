@@ -26,6 +26,7 @@ const asaasApiKey = process.env.ASAAS_API_KEY;
 const asaasBaseUrl = process.env.ASAAS_BASE_URL || "https://sandbox.asaas.com/api/v3";
 const asaasWebhookToken = process.env.ASAAS_WEBHOOK_TOKEN || "";
 const asaasDefaultSessionValue = Number(process.env.ASAAS_DEFAULT_SESSION_VALUE || "150");
+const evolutionWebhookToken = process.env.EVOLUTION_WEBHOOK_TOKEN || "";
 const appUrl = process.env.APP_URL || "http://localhost:3000";
 const adminUrl = process.env.ADMIN_URL || "";
 const googleClientId = process.env.GOOGLE_CLIENT_ID || "";
@@ -145,6 +146,9 @@ type BillingMode = "session" | "monthly";
 type NoteSource = "audio" | "quick" | "manual";
 type GoogleReminderPreset = "light" | "standard" | "intense";
 type AiUsageStatus = "success" | "failed";
+type EvolutionConnectionStatus = "connected" | "disconnected" | "error";
+type InboxThreadStatus = "open" | "pending" | "resolved" | "blocked";
+type InboxMessageDirection = "inbound" | "outbound" | "system";
 
 class HttpError extends Error {
   status: number;
@@ -177,6 +181,7 @@ async function resolveUserId(req: Request): Promise<string | null> {
 
 let warnedMissingTenantSubscriptionSchema = false;
 let warnedMissingSuperadminSchema = false;
+let warnedMissingEvolutionSchema = false;
 
 async function bootstrapSuperadminsFromEnv() {
   if (superadminBootstrapUserIds.length === 0) return;
@@ -491,6 +496,81 @@ function toDateOnly(value: unknown): string | null {
   return `${match[1]}-${match[2]}-${match[3]}`;
 }
 
+function toBoolean(value: unknown) {
+  if (typeof value === "boolean") return value;
+  if (typeof value === "number") return value !== 0;
+  const raw = toNullableString(value);
+  if (!raw) return false;
+  return raw === "1" || raw.toLowerCase() === "true" || raw.toLowerCase() === "yes";
+}
+
+function toTimestampIso(value: unknown): string | null {
+  if (typeof value === "number" && Number.isFinite(value)) {
+    const millis = value > 1_000_000_000_000 ? value : value * 1000;
+    const parsed = new Date(millis);
+    if (!Number.isNaN(parsed.getTime())) return parsed.toISOString();
+  }
+  if (typeof value === "string" && value.trim() !== "") {
+    const maybeNumber = Number(value);
+    if (Number.isFinite(maybeNumber)) {
+      return toTimestampIso(maybeNumber);
+    }
+    return toDateTimeOrNull(value);
+  }
+  return null;
+}
+
+function ensureHttpUrl(value: unknown, fieldName: string) {
+  const raw = toNullableString(value);
+  if (!raw) {
+    throw new HttpError(400, `${fieldName} e obrigatorio.`);
+  }
+  let parsed: URL;
+  try {
+    parsed = new URL(raw);
+  } catch {
+    throw new HttpError(400, `${fieldName} invalido.`);
+  }
+  if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
+    throw new HttpError(400, `${fieldName} deve iniciar com http:// ou https://.`);
+  }
+  parsed.pathname = parsed.pathname.replace(/\/+$/, "");
+  return parsed.toString().replace(/\/+$/, "");
+}
+
+function normalizeInboxLabels(value: unknown): string[] {
+  const rawItems = Array.isArray(value)
+    ? value
+    : typeof value === "string"
+    ? value.split(",")
+    : [];
+  const normalized = rawItems
+    .map((item) => toNullableString(item))
+    .filter((item): item is string => Boolean(item))
+    .map((item) =>
+      item
+        .toLowerCase()
+        .replace(/\s+/g, "-")
+        .replace(/[^a-z0-9._-]+/g, "")
+    )
+    .filter((item) => item.length > 0)
+    .slice(0, 30);
+  return Array.from(new Set(normalized));
+}
+
+function parseLabelsJson(value: unknown): string[] {
+  if (!Array.isArray(value)) return [];
+  return normalizeInboxLabels(value);
+}
+
+function toPhoneFromThreadId(value: unknown): string | null {
+  const raw = toNullableString(value);
+  if (!raw) return null;
+  const beforeAt = raw.split("@")[0];
+  const digits = beforeAt.replace(/\D+/g, "");
+  return digits.length > 0 ? digits : null;
+}
+
 function addMinutesToIso(iso: string, minutes: number) {
   const date = new Date(iso);
   date.setMinutes(date.getMinutes() + minutes);
@@ -572,6 +652,24 @@ function parseTenantStatus(value: unknown): TenantStatus | null {
 function parseBillingProvider(value: unknown): BillingProvider | null {
   const raw = toNullableString(value);
   if (raw === "manual" || raw === "asaas") return raw;
+  return null;
+}
+
+function parseEvolutionConnectionStatus(value: unknown): EvolutionConnectionStatus | null {
+  const raw = toNullableString(value);
+  if (raw === "connected" || raw === "disconnected" || raw === "error") return raw;
+  return null;
+}
+
+function parseInboxThreadStatus(value: unknown): InboxThreadStatus | null {
+  const raw = toNullableString(value);
+  if (raw === "open" || raw === "pending" || raw === "resolved" || raw === "blocked") return raw;
+  return null;
+}
+
+function parseInboxMessageDirection(value: unknown): InboxMessageDirection | null {
+  const raw = toNullableString(value);
+  if (raw === "inbound" || raw === "outbound" || raw === "system") return raw;
   return null;
 }
 
@@ -1112,6 +1210,421 @@ async function registerPlatformAuditLog(payload: PlatformAuditPayload) {
     }
     console.error("[registerPlatformAuditLog]", error);
   }
+}
+
+type EvolutionConnectionRow = {
+  clinic_id: string;
+  api_base_url: string;
+  instance_name: string;
+  api_token_encrypted: string;
+  webhook_secret: string | null;
+  status: EvolutionConnectionStatus | null;
+  last_error: string | null;
+  last_seen_at: string | null;
+  metadata: Record<string, unknown> | null;
+  updated_at: string | null;
+};
+
+type InboxThreadRow = {
+  id: number;
+  clinic_id: string;
+  channel: string | null;
+  external_thread_id: string | null;
+  contact_name: string | null;
+  contact_phone: string | null;
+  status: InboxThreadStatus | null;
+  assigned_user_id: string | null;
+  labels: unknown;
+  unread_count: number | null;
+  last_message_preview: string | null;
+  last_message_at: string | null;
+  metadata: Record<string, unknown> | null;
+  created_at: string | null;
+  updated_at: string | null;
+};
+
+type InboxMessageRow = {
+  id: number;
+  clinic_id: string;
+  thread_id: number;
+  direction: InboxMessageDirection | null;
+  message_type: string | null;
+  content: string | null;
+  external_message_id: string | null;
+  sender_name: string | null;
+  sender_phone: string | null;
+  sent_by_user_id: string | null;
+  sent_at: string | null;
+  status: string | null;
+  payload: Record<string, unknown> | null;
+  created_at: string | null;
+};
+
+function throwIfEvolutionSchemaMissing(error: unknown) {
+  if (isMissingRelationError(error)) {
+    if (!warnedMissingEvolutionSchema) {
+      warnedMissingEvolutionSchema = true;
+      console.warn(
+        "Evolution/inbox schema is missing. Run migration 20260225_008_evolution_inbox_core.sql."
+      );
+    }
+    throw new HttpError(
+      503,
+      "Database schema is outdated. Run migration 20260225_008_evolution_inbox_core.sql."
+    );
+  }
+}
+
+function evolutionConnectionToResponse(connection: Partial<EvolutionConnectionRow> | null) {
+  if (!connection) {
+    return {
+      configured: false,
+      connected: false,
+      connection: null,
+    };
+  }
+  return {
+    configured: true,
+    connected: parseEvolutionConnectionStatus(connection.status) === "connected",
+    connection: {
+      clinic_id: String(connection.clinic_id || ""),
+      api_base_url: toNullableString(connection.api_base_url),
+      instance_name: toNullableString(connection.instance_name),
+      webhook_secret_configured: Boolean(toNullableString(connection.webhook_secret)),
+      status: parseEvolutionConnectionStatus(connection.status) || "disconnected",
+      last_error: toNullableString(connection.last_error),
+      last_seen_at: toNullableString(connection.last_seen_at),
+      updated_at: toNullableString(connection.updated_at),
+    },
+  };
+}
+
+function inboxThreadToResponse(row: Partial<InboxThreadRow>) {
+  return {
+    id: Number(row.id || 0),
+    clinic_id: String(row.clinic_id || ""),
+    channel: toNullableString(row.channel) || "whatsapp",
+    external_thread_id: toNullableString(row.external_thread_id),
+    contact_name: toNullableString(row.contact_name),
+    contact_phone: toNullableString(row.contact_phone),
+    status: parseInboxThreadStatus(row.status) || "open",
+    assigned_user_id: toNullableString(row.assigned_user_id),
+    labels: parseLabelsJson(row.labels),
+    unread_count: Math.max(0, Number(row.unread_count || 0)),
+    last_message_preview: toNullableString(row.last_message_preview),
+    last_message_at: toNullableString(row.last_message_at),
+    metadata: row.metadata && typeof row.metadata === "object" ? row.metadata : {},
+    created_at: toNullableString(row.created_at),
+    updated_at: toNullableString(row.updated_at),
+  };
+}
+
+function inboxMessageToResponse(row: Partial<InboxMessageRow>) {
+  return {
+    id: Number(row.id || 0),
+    clinic_id: String(row.clinic_id || ""),
+    thread_id: Number(row.thread_id || 0),
+    direction: parseInboxMessageDirection(row.direction) || "inbound",
+    message_type: toNullableString(row.message_type) || "text",
+    content: toNullableString(row.content),
+    external_message_id: toNullableString(row.external_message_id),
+    sender_name: toNullableString(row.sender_name),
+    sender_phone: toNullableString(row.sender_phone),
+    sent_by_user_id: toNullableString(row.sent_by_user_id),
+    sent_at: toNullableString(row.sent_at),
+    status: toNullableString(row.status) || "received",
+    payload: row.payload && typeof row.payload === "object" ? row.payload : {},
+    created_at: toNullableString(row.created_at),
+  };
+}
+
+async function getEvolutionConnection(clinicId: string) {
+  const { data, error } = await supabase
+    .from("clinic_evolution_connections")
+    .select(
+      "clinic_id, api_base_url, instance_name, api_token_encrypted, webhook_secret, status, last_error, last_seen_at, metadata, updated_at"
+    )
+    .eq("clinic_id", clinicId)
+    .maybeSingle();
+  if (error) {
+    throwIfEvolutionSchemaMissing(error);
+    throw error;
+  }
+  return (data as EvolutionConnectionRow | null) || null;
+}
+
+async function assertUserBelongsClinic(clinicId: string, userId: string) {
+  const { data, error } = await supabase
+    .from("clinic_members")
+    .select("id, role, active")
+    .eq("clinic_id", clinicId)
+    .eq("user_id", userId)
+    .eq("active", true)
+    .maybeSingle();
+  if (error) throw error;
+  if (!data) {
+    throw new HttpError(400, "Usuario informado nao pertence a clinica.");
+  }
+}
+
+async function evolutionRequest(
+  connection: EvolutionConnectionRow,
+  pathname: string,
+  init: RequestInit = {}
+) {
+  const baseUrl = ensureHttpUrl(connection.api_base_url, "api_base_url");
+  let token = "";
+  try {
+    token = decryptSecret(connection.api_token_encrypted);
+  } catch (error) {
+    throw new HttpError(500, `Falha ao descriptografar token Evolution: ${String(error)}`);
+  }
+  if (!token) {
+    throw new HttpError(409, "Token Evolution nao configurado.");
+  }
+
+  const headers = new Headers(init.headers ?? {});
+  headers.set("accept", "application/json");
+  headers.set("apikey", token);
+  headers.set("authorization", `Bearer ${token}`);
+  if (init.body && !headers.has("content-type")) {
+    headers.set("content-type", "application/json");
+  }
+
+  const response = await fetch(`${baseUrl}${pathname}`, {
+    ...init,
+    headers,
+  });
+  const rawText = await response.text();
+  let payload: Record<string, unknown> | null = null;
+  try {
+    payload = rawText ? (JSON.parse(rawText) as Record<string, unknown>) : null;
+  } catch {
+    payload = null;
+  }
+
+  if (!response.ok) {
+    const payloadMessage = toNullableString((payload as Record<string, unknown> | null)?.message);
+    const payloadError =
+      payload && typeof payload.error === "string" ? toNullableString(payload.error) : null;
+    const message =
+      payloadMessage ||
+      payloadError ||
+      rawText ||
+      "Falha na requisicao Evolution.";
+    throw new HttpError(response.status, message);
+  }
+
+  return payload || { raw: rawText };
+}
+
+async function markEvolutionConnectionHeartbeat(clinicId: string, patch?: Record<string, unknown>) {
+  const { error } = await supabase
+    .from("clinic_evolution_connections")
+    .update({
+      status: "connected",
+      last_error: null,
+      last_seen_at: new Date().toISOString(),
+      updated_at: new Date().toISOString(),
+      ...(patch || {}),
+    })
+    .eq("clinic_id", clinicId);
+  if (error) {
+    throwIfEvolutionSchemaMissing(error);
+    throw error;
+  }
+}
+
+type ParsedEvolutionWebhookMessage = {
+  direction: InboxMessageDirection;
+  eventName: string;
+  externalThreadId: string | null;
+  externalMessageId: string | null;
+  contactName: string | null;
+  contactPhone: string | null;
+  content: string | null;
+  sentAt: string;
+  payload: Record<string, unknown>;
+};
+
+function parseEvolutionWebhookMessage(payload: Record<string, unknown>): ParsedEvolutionWebhookMessage {
+  const data = asRecord(payload.data);
+  const key = asRecord(data.key);
+  const message = asRecord(data.message);
+  const extendedText = asRecord(message.extendedTextMessage);
+  const messageContext = asRecord(payload.message);
+
+  const eventName = toNullableString(payload.event) || toNullableString(payload.type) || "unknown";
+  const externalThreadId =
+    toNullableString(key.remoteJid) ||
+    toNullableString(data.remoteJid) ||
+    toNullableString(data.chatId) ||
+    toNullableString(payload.chatId) ||
+    toNullableString(payload.remoteJid) ||
+    null;
+  const externalMessageId =
+    toNullableString(key.id) ||
+    toNullableString(data.id) ||
+    toNullableString(payload.messageId) ||
+    null;
+  const contactName =
+    toNullableString(data.pushName) ||
+    toNullableString(payload.pushName) ||
+    toNullableString(data.senderName) ||
+    toNullableString(payload.senderName) ||
+    null;
+  const contactPhone =
+    toPhoneFromThreadId(externalThreadId) ||
+    toPhoneFromThreadId(toNullableString(payload.from)) ||
+    toNullableString(data.sender) ||
+    null;
+  const content =
+    toNullableString(message.conversation) ||
+    toNullableString(extendedText.text) ||
+    toNullableString(messageContext.text) ||
+    toNullableString(data.text) ||
+    toNullableString(payload.text) ||
+    null;
+  const fromMe = toBoolean(key.fromMe) || toBoolean(data.fromMe) || toBoolean(payload.fromMe);
+  const sentAt =
+    toTimestampIso(data.messageTimestamp) ||
+    toTimestampIso(payload.timestamp) ||
+    new Date().toISOString();
+
+  return {
+    direction: fromMe ? "outbound" : "inbound",
+    eventName,
+    externalThreadId,
+    externalMessageId,
+    contactName,
+    contactPhone,
+    content,
+    sentAt,
+    payload,
+  };
+}
+
+async function upsertInboxThreadFromWebhook(clinicId: string, parsed: ParsedEvolutionWebhookMessage) {
+  if (!parsed.externalThreadId) {
+    throw new HttpError(400, "Webhook sem identificador de conversa.");
+  }
+
+  const { data: existing, error: existingError } = await supabase
+    .from("inbox_threads")
+    .select(
+      "id, clinic_id, channel, external_thread_id, contact_name, contact_phone, status, assigned_user_id, labels, unread_count, last_message_preview, last_message_at, metadata, created_at, updated_at"
+    )
+    .eq("clinic_id", clinicId)
+    .eq("channel", "whatsapp")
+    .eq("external_thread_id", parsed.externalThreadId)
+    .maybeSingle();
+  if (existingError) {
+    throwIfEvolutionSchemaMissing(existingError);
+    throw existingError;
+  }
+
+  const nowIso = new Date().toISOString();
+  const status = parseInboxThreadStatus(existing?.status) || "open";
+  const currentUnread = Number(existing?.unread_count || 0);
+  const nextUnread = parsed.direction === "inbound" ? currentUnread + 1 : currentUnread;
+
+  if (existing?.id) {
+    const { data: updated, error: updateError } = await supabase
+      .from("inbox_threads")
+      .update({
+        contact_name: parsed.contactName || existing.contact_name || null,
+        contact_phone: parsed.contactPhone || existing.contact_phone || null,
+        last_message_preview: parsed.content || existing.last_message_preview || null,
+        last_message_at: parsed.sentAt,
+        unread_count: nextUnread,
+        status,
+        updated_at: nowIso,
+      })
+      .eq("id", existing.id)
+      .eq("clinic_id", clinicId)
+      .select(
+        "id, clinic_id, channel, external_thread_id, contact_name, contact_phone, status, assigned_user_id, labels, unread_count, last_message_preview, last_message_at, metadata, created_at, updated_at"
+      )
+      .single();
+    if (updateError) {
+      throwIfEvolutionSchemaMissing(updateError);
+      throw updateError;
+    }
+    return updated as InboxThreadRow;
+  }
+
+  const { data: inserted, error: insertError } = await supabase
+    .from("inbox_threads")
+    .insert({
+      clinic_id: clinicId,
+      channel: "whatsapp",
+      external_thread_id: parsed.externalThreadId,
+      contact_name: parsed.contactName,
+      contact_phone: parsed.contactPhone,
+      status: "open",
+      labels: [],
+      unread_count: parsed.direction === "inbound" ? 1 : 0,
+      last_message_preview: parsed.content,
+      last_message_at: parsed.sentAt,
+      metadata: {},
+      updated_at: nowIso,
+    })
+    .select(
+      "id, clinic_id, channel, external_thread_id, contact_name, contact_phone, status, assigned_user_id, labels, unread_count, last_message_preview, last_message_at, metadata, created_at, updated_at"
+    )
+    .single();
+  if (insertError) {
+    throwIfEvolutionSchemaMissing(insertError);
+    throw insertError;
+  }
+  return inserted as InboxThreadRow;
+}
+
+async function insertInboxMessageIfMissing(
+  clinicId: string,
+  threadId: number,
+  parsed: ParsedEvolutionWebhookMessage
+) {
+  if (parsed.externalMessageId) {
+    const { data: existing, error: existingError } = await supabase
+      .from("inbox_messages")
+      .select("id")
+      .eq("clinic_id", clinicId)
+      .eq("external_message_id", parsed.externalMessageId)
+      .maybeSingle();
+    if (existingError) {
+      throwIfEvolutionSchemaMissing(existingError);
+      throw existingError;
+    }
+    if (existing?.id) {
+      return null;
+    }
+  }
+
+  const { data, error } = await supabase
+    .from("inbox_messages")
+    .insert({
+      clinic_id: clinicId,
+      thread_id: threadId,
+      direction: parsed.direction,
+      message_type: "text",
+      content: parsed.content,
+      external_message_id: parsed.externalMessageId,
+      sender_name: parsed.contactName,
+      sender_phone: parsed.contactPhone,
+      sent_at: parsed.sentAt,
+      status: parsed.direction === "inbound" ? "received" : "sent",
+      payload: parsed.payload,
+    })
+    .select(
+      "id, clinic_id, thread_id, direction, message_type, content, external_message_id, sender_name, sender_phone, sent_by_user_id, sent_at, status, payload, created_at"
+    )
+    .single();
+  if (error) {
+    throwIfEvolutionSchemaMissing(error);
+    throw error;
+  }
+  return data as InboxMessageRow;
 }
 
 async function countNotesByRange(
@@ -2829,6 +3342,7 @@ export async function createApp(options: CreateAppOptions = {}) {
       googleFeatureEnabled: featureGoogleEnabled,
       asaasConfigured: isAsaasConfigured(),
       googleConfigured: isGoogleConfigured(),
+      evolutionWebhookConfigured: Boolean(evolutionWebhookToken),
       superadminHostsConfigured: superadminAllowedHosts,
       superadminBootstrapConfigured: superadminBootstrapUserIds.length > 0,
     });
@@ -3746,6 +4260,585 @@ export async function createApp(options: CreateAppOptions = {}) {
       res.json({ success: true });
     } catch (error) {
       handleRouteError(res, error, "DELETE /api/clinic/members/:id");
+    }
+  });
+
+  app.get("/api/integrations/evolution/status", async (req, res) => {
+    const context = await requireUserContext(req, res);
+    if (!context) return;
+
+    try {
+      const connection = await getEvolutionConnection(context.clinicId);
+      res.json(evolutionConnectionToResponse(connection));
+    } catch (error) {
+      try {
+        throwIfEvolutionSchemaMissing(error);
+      } catch (mappedError) {
+        handleRouteError(res, mappedError, "GET /api/integrations/evolution/status");
+        return;
+      }
+      handleRouteError(res, error, "GET /api/integrations/evolution/status");
+    }
+  });
+
+  app.put("/api/integrations/evolution/settings", async (req, res) => {
+    const context = await requireUserContext(req, res, ["admin", "professional"]);
+    if (!context) return;
+
+    try {
+      const apiBaseUrl = ensureHttpUrl(req.body?.api_base_url, "api_base_url");
+      const instanceName = toNullableString(req.body?.instance_name);
+      if (!instanceName) {
+        res.status(400).json({ error: "instance_name e obrigatorio." });
+        return;
+      }
+      const apiToken = toNullableString(req.body?.api_token);
+      const webhookSecret = toNullableString(req.body?.webhook_secret);
+
+      const current = await getEvolutionConnection(context.clinicId);
+      if (!current && !apiToken) {
+        res.status(400).json({ error: "api_token e obrigatorio na primeira configuracao." });
+        return;
+      }
+
+      const nowIso = new Date().toISOString();
+      const nextTokenEncrypted = apiToken ? encryptSecret(apiToken) : current?.api_token_encrypted;
+      if (!nextTokenEncrypted) {
+        res.status(400).json({ error: "api_token nao configurado." });
+        return;
+      }
+
+      const { data, error } = await supabase
+        .from("clinic_evolution_connections")
+        .upsert(
+          {
+            clinic_id: context.clinicId,
+            api_base_url: apiBaseUrl,
+            instance_name: instanceName,
+            api_token_encrypted: nextTokenEncrypted,
+            webhook_secret:
+              webhookSecret !== null
+                ? webhookSecret
+                : toNullableString(current?.webhook_secret) || null,
+            status: "connected",
+            last_error: null,
+            updated_at: nowIso,
+            created_by_user_id: context.userId,
+          },
+          { onConflict: "clinic_id" }
+        )
+        .select(
+          "clinic_id, api_base_url, instance_name, api_token_encrypted, webhook_secret, status, last_error, last_seen_at, metadata, updated_at"
+        )
+        .single();
+      if (error) {
+        throwIfEvolutionSchemaMissing(error);
+        throw error;
+      }
+
+      res.json(evolutionConnectionToResponse(data as EvolutionConnectionRow));
+    } catch (error) {
+      try {
+        throwIfEvolutionSchemaMissing(error);
+      } catch (mappedError) {
+        handleRouteError(res, mappedError, "PUT /api/integrations/evolution/settings");
+        return;
+      }
+      handleRouteError(res, error, "PUT /api/integrations/evolution/settings");
+    }
+  });
+
+  app.post("/api/integrations/evolution/disconnect", async (req, res) => {
+    const context = await requireUserContext(req, res, ["admin", "professional"]);
+    if (!context) return;
+
+    try {
+      const { error } = await supabase
+        .from("clinic_evolution_connections")
+        .update({
+          status: "disconnected",
+          updated_at: new Date().toISOString(),
+        })
+        .eq("clinic_id", context.clinicId);
+      if (error) {
+        throwIfEvolutionSchemaMissing(error);
+        throw error;
+      }
+
+      res.json({ success: true });
+    } catch (error) {
+      try {
+        throwIfEvolutionSchemaMissing(error);
+      } catch (mappedError) {
+        handleRouteError(res, mappedError, "POST /api/integrations/evolution/disconnect");
+        return;
+      }
+      handleRouteError(res, error, "POST /api/integrations/evolution/disconnect");
+    }
+  });
+
+  app.post("/api/integrations/evolution/webhook", sensitiveLimiter, async (req, res) => {
+    const clinicId = toUuidOrNull(
+      req.query?.clinic_id || req.body?.clinic_id || req.body?.clinicId || req.header("x-clinic-id")
+    );
+    if (!clinicId) {
+      res.status(400).json({ error: "clinic_id invalido no webhook." });
+      return;
+    }
+
+    try {
+      const connection = await getEvolutionConnection(clinicId);
+      if (!connection) {
+        res.status(404).json({ error: "Conexao Evolution nao encontrada para a clinica." });
+        return;
+      }
+
+      const authHeader = String(req.header("authorization") || "");
+      const authToken = authHeader.startsWith("Bearer ") ? authHeader.slice(7).trim() : "";
+      const providedToken =
+        toNullableString(req.header("x-evolution-token")) ||
+        toNullableString(req.header("x-smartpsi-token")) ||
+        authToken ||
+        "";
+      const expectedToken =
+        toNullableString(connection.webhook_secret) || toNullableString(evolutionWebhookToken) || "";
+      if (expectedToken && providedToken !== expectedToken) {
+        res.status(401).json({ error: "Token de webhook Evolution invalido." });
+        return;
+      }
+
+      const payload = asRecord(req.body);
+      const parsed = parseEvolutionWebhookMessage(payload);
+      if (!parsed.externalThreadId) {
+        res.status(202).json({ accepted: true, reason: "Webhook sem thread identificavel." });
+        return;
+      }
+
+      const thread = await upsertInboxThreadFromWebhook(clinicId, parsed);
+      const message = await insertInboxMessageIfMissing(clinicId, Number(thread.id), parsed);
+      await markEvolutionConnectionHeartbeat(clinicId);
+
+      res.json({
+        success: true,
+        event: parsed.eventName,
+        thread_id: Number(thread.id),
+        message_id: message ? Number(message.id) : null,
+        duplicate: !message,
+      });
+    } catch (error) {
+      try {
+        throwIfEvolutionSchemaMissing(error);
+      } catch (mappedError) {
+        handleRouteError(res, mappedError, "POST /api/integrations/evolution/webhook");
+        return;
+      }
+      handleRouteError(res, error, "POST /api/integrations/evolution/webhook");
+    }
+  });
+
+  app.get("/api/inbox/threads", async (req, res) => {
+    const context = await requireUserContext(req, res);
+    if (!context) return;
+
+    try {
+      const statusFilter = parseInboxThreadStatus(req.query?.status);
+      const queryText = String(req.query?.q || "")
+        .trim()
+        .toLowerCase();
+      const assignedFilterRaw = toNullableString(req.query?.assigned);
+      const limitRaw = Number(req.query?.limit || 120);
+      const limit = Number.isFinite(limitRaw) ? Math.min(Math.max(limitRaw, 1), 300) : 120;
+
+      let query = supabase
+        .from("inbox_threads")
+        .select(
+          "id, clinic_id, channel, external_thread_id, contact_name, contact_phone, status, assigned_user_id, labels, unread_count, last_message_preview, last_message_at, metadata, created_at, updated_at"
+        )
+        .eq("clinic_id", context.clinicId)
+        .limit(limit)
+        .order("last_message_at", { ascending: false });
+      if (statusFilter) {
+        query = query.eq("status", statusFilter);
+      }
+
+      const { data, error } = await query;
+      if (error) {
+        throwIfEvolutionSchemaMissing(error);
+        throw error;
+      }
+
+      let threads = (data || []) as InboxThreadRow[];
+      if (assignedFilterRaw === "me") {
+        threads = threads.filter((thread) => toNullableString(thread.assigned_user_id) === context.userId);
+      } else if (assignedFilterRaw === "unassigned") {
+        threads = threads.filter((thread) => !toNullableString(thread.assigned_user_id));
+      }
+
+      if (queryText) {
+        threads = threads.filter((thread) => {
+          const haystack = `${thread.contact_name || ""} ${thread.contact_phone || ""} ${
+            thread.last_message_preview || ""
+          }`.toLowerCase();
+          return haystack.includes(queryText);
+        });
+      }
+
+      threads.sort((a, b) => {
+        const aDate = new Date(a.last_message_at || a.updated_at || 0).getTime();
+        const bDate = new Date(b.last_message_at || b.updated_at || 0).getTime();
+        return bDate - aDate;
+      });
+
+      res.json({
+        threads: threads.map((item) => inboxThreadToResponse(item)),
+      });
+    } catch (error) {
+      try {
+        throwIfEvolutionSchemaMissing(error);
+      } catch (mappedError) {
+        handleRouteError(res, mappedError, "GET /api/inbox/threads");
+        return;
+      }
+      handleRouteError(res, error, "GET /api/inbox/threads");
+    }
+  });
+
+  app.get("/api/inbox/threads/:threadId/messages", async (req, res) => {
+    const context = await requireUserContext(req, res);
+    if (!context) return;
+
+    const threadId = toNullableNumber(req.params.threadId);
+    if (threadId === null) {
+      res.status(400).json({ error: "threadId invalido." });
+      return;
+    }
+
+    try {
+      const [threadResult, messagesResult] = await Promise.all([
+        supabase
+          .from("inbox_threads")
+          .select(
+            "id, clinic_id, channel, external_thread_id, contact_name, contact_phone, status, assigned_user_id, labels, unread_count, last_message_preview, last_message_at, metadata, created_at, updated_at"
+          )
+          .eq("clinic_id", context.clinicId)
+          .eq("id", threadId)
+          .maybeSingle(),
+        supabase
+          .from("inbox_messages")
+          .select(
+            "id, clinic_id, thread_id, direction, message_type, content, external_message_id, sender_name, sender_phone, sent_by_user_id, sent_at, status, payload, created_at"
+          )
+          .eq("clinic_id", context.clinicId)
+          .eq("thread_id", threadId)
+          .order("sent_at", { ascending: true })
+          .limit(500),
+      ]);
+
+      if (threadResult.error) {
+        throwIfEvolutionSchemaMissing(threadResult.error);
+        throw threadResult.error;
+      }
+      if (!threadResult.data) {
+        res.status(404).json({ error: "Thread nao encontrada." });
+        return;
+      }
+      if (messagesResult.error) {
+        throwIfEvolutionSchemaMissing(messagesResult.error);
+        throw messagesResult.error;
+      }
+
+      res.json({
+        thread: inboxThreadToResponse(threadResult.data as InboxThreadRow),
+        messages: (messagesResult.data || []).map((item) =>
+          inboxMessageToResponse(item as InboxMessageRow)
+        ),
+      });
+    } catch (error) {
+      try {
+        throwIfEvolutionSchemaMissing(error);
+      } catch (mappedError) {
+        handleRouteError(res, mappedError, "GET /api/inbox/threads/:threadId/messages");
+        return;
+      }
+      handleRouteError(res, error, "GET /api/inbox/threads/:threadId/messages");
+    }
+  });
+
+  app.patch("/api/inbox/threads/:threadId", async (req, res) => {
+    const context = await requireUserContext(req, res);
+    if (!context) return;
+
+    const threadId = toNullableNumber(req.params.threadId);
+    if (threadId === null) {
+      res.status(400).json({ error: "threadId invalido." });
+      return;
+    }
+
+    try {
+      const { data: current, error: currentError } = await supabase
+        .from("inbox_threads")
+        .select(
+          "id, clinic_id, channel, external_thread_id, contact_name, contact_phone, status, assigned_user_id, labels, unread_count, last_message_preview, last_message_at, metadata, created_at, updated_at"
+        )
+        .eq("clinic_id", context.clinicId)
+        .eq("id", threadId)
+        .maybeSingle();
+      if (currentError) {
+        throwIfEvolutionSchemaMissing(currentError);
+        throw currentError;
+      }
+      if (!current) {
+        res.status(404).json({ error: "Thread nao encontrada." });
+        return;
+      }
+
+      const nextStatus =
+        req.body?.status !== undefined
+          ? parseInboxThreadStatus(req.body?.status)
+          : parseInboxThreadStatus(current.status);
+      if (req.body?.status !== undefined && !nextStatus) {
+        res.status(400).json({ error: "status invalido." });
+        return;
+      }
+
+      let assignedUserId: string | null | undefined = undefined;
+      if (req.body?.assigned_user_id !== undefined) {
+        if (req.body?.assigned_user_id === null || req.body?.assigned_user_id === "") {
+          assignedUserId = null;
+        } else {
+          const parsedUserId = toUuidOrNull(req.body?.assigned_user_id);
+          if (!parsedUserId) {
+            res.status(400).json({ error: "assigned_user_id invalido." });
+            return;
+          }
+          await assertUserBelongsClinic(context.clinicId, parsedUserId);
+          assignedUserId = parsedUserId;
+        }
+      }
+
+      const nextLabels =
+        req.body?.labels !== undefined ? normalizeInboxLabels(req.body?.labels) : parseLabelsJson(current.labels);
+      const { data: updated, error: updateError } = await supabase
+        .from("inbox_threads")
+        .update({
+          status: nextStatus || "open",
+          assigned_user_id:
+            assignedUserId === undefined ? toNullableString(current.assigned_user_id) : assignedUserId,
+          labels: nextLabels,
+          updated_at: new Date().toISOString(),
+        })
+        .eq("clinic_id", context.clinicId)
+        .eq("id", threadId)
+        .select(
+          "id, clinic_id, channel, external_thread_id, contact_name, contact_phone, status, assigned_user_id, labels, unread_count, last_message_preview, last_message_at, metadata, created_at, updated_at"
+        )
+        .single();
+      if (updateError) {
+        throwIfEvolutionSchemaMissing(updateError);
+        throw updateError;
+      }
+
+      res.json({
+        thread: inboxThreadToResponse(updated as InboxThreadRow),
+      });
+    } catch (error) {
+      try {
+        throwIfEvolutionSchemaMissing(error);
+      } catch (mappedError) {
+        handleRouteError(res, mappedError, "PATCH /api/inbox/threads/:threadId");
+        return;
+      }
+      handleRouteError(res, error, "PATCH /api/inbox/threads/:threadId");
+    }
+  });
+
+  app.post("/api/inbox/threads/:threadId/read", async (req, res) => {
+    const context = await requireUserContext(req, res);
+    if (!context) return;
+
+    const threadId = toNullableNumber(req.params.threadId);
+    if (threadId === null) {
+      res.status(400).json({ error: "threadId invalido." });
+      return;
+    }
+
+    try {
+      const { data, error } = await supabase
+        .from("inbox_threads")
+        .update({
+          unread_count: 0,
+          updated_at: new Date().toISOString(),
+        })
+        .eq("clinic_id", context.clinicId)
+        .eq("id", threadId)
+        .select(
+          "id, clinic_id, channel, external_thread_id, contact_name, contact_phone, status, assigned_user_id, labels, unread_count, last_message_preview, last_message_at, metadata, created_at, updated_at"
+        )
+        .single();
+      if (error) {
+        throwIfEvolutionSchemaMissing(error);
+        throw error;
+      }
+
+      res.json({
+        success: true,
+        thread: inboxThreadToResponse(data as InboxThreadRow),
+      });
+    } catch (error) {
+      try {
+        throwIfEvolutionSchemaMissing(error);
+      } catch (mappedError) {
+        handleRouteError(res, mappedError, "POST /api/inbox/threads/:threadId/read");
+        return;
+      }
+      handleRouteError(res, error, "POST /api/inbox/threads/:threadId/read");
+    }
+  });
+
+  app.post("/api/inbox/threads/:threadId/messages", async (req, res) => {
+    const context = await requireUserContext(req, res);
+    if (!context) return;
+
+    const threadId = toNullableNumber(req.params.threadId);
+    if (threadId === null) {
+      res.status(400).json({ error: "threadId invalido." });
+      return;
+    }
+
+    const content = toNullableString(req.body?.content);
+    if (!content) {
+      res.status(400).json({ error: "content e obrigatorio." });
+      return;
+    }
+
+    try {
+      const [{ data: thread, error: threadError }, connection] = await Promise.all([
+        supabase
+          .from("inbox_threads")
+          .select(
+            "id, clinic_id, channel, external_thread_id, contact_name, contact_phone, status, assigned_user_id, labels, unread_count, last_message_preview, last_message_at, metadata, created_at, updated_at"
+          )
+          .eq("clinic_id", context.clinicId)
+          .eq("id", threadId)
+          .maybeSingle(),
+        getEvolutionConnection(context.clinicId),
+      ]);
+      if (threadError) {
+        throwIfEvolutionSchemaMissing(threadError);
+        throw threadError;
+      }
+      if (!thread) {
+        res.status(404).json({ error: "Thread nao encontrada." });
+        return;
+      }
+      if (!connection) {
+        res.status(409).json({ error: "Conexao Evolution nao configurada para a clinica." });
+        return;
+      }
+
+      const destination =
+        toPhoneFromThreadId(thread.external_thread_id) ||
+        toNullableString(thread.contact_phone) ||
+        toNullableString(thread.external_thread_id);
+      if (!destination) {
+        res.status(400).json({ error: "Thread sem destino valido para envio." });
+        return;
+      }
+
+      let providerPayload: Record<string, unknown> = {};
+      let sendStatus = "sent";
+      let providerError: unknown = null;
+      try {
+        providerPayload = await evolutionRequest(
+          connection,
+          `/message/sendText/${encodeURIComponent(connection.instance_name)}`,
+          {
+            method: "POST",
+            body: JSON.stringify({
+              number: destination,
+              text: content,
+              delay: 0,
+            }),
+          }
+        );
+        await markEvolutionConnectionHeartbeat(context.clinicId);
+      } catch (error) {
+        sendStatus = "failed";
+        providerError = error;
+        providerPayload = {
+          error: error instanceof Error ? error.message : String(error),
+        };
+        await supabase
+          .from("clinic_evolution_connections")
+          .update({
+            status: "error",
+            last_error: error instanceof Error ? error.message : String(error),
+            updated_at: new Date().toISOString(),
+          })
+          .eq("clinic_id", context.clinicId);
+      }
+
+      const externalMessageId =
+        toNullableString(providerPayload?.key && asRecord(providerPayload.key).id) ||
+        toNullableString(providerPayload?.id) ||
+        null;
+      const nowIso = new Date().toISOString();
+
+      const [{ data: message, error: messageError }, { error: threadUpdateError }] = await Promise.all([
+        supabase
+          .from("inbox_messages")
+          .insert({
+            clinic_id: context.clinicId,
+            thread_id: threadId,
+            direction: "outbound",
+            message_type: "text",
+            content,
+            external_message_id: externalMessageId,
+            sender_name: null,
+            sender_phone: null,
+            sent_by_user_id: context.userId,
+            sent_at: nowIso,
+            status: sendStatus,
+            payload: providerPayload,
+          })
+          .select(
+            "id, clinic_id, thread_id, direction, message_type, content, external_message_id, sender_name, sender_phone, sent_by_user_id, sent_at, status, payload, created_at"
+          )
+          .single(),
+        supabase
+          .from("inbox_threads")
+          .update({
+            last_message_preview: content,
+            last_message_at: nowIso,
+            updated_at: nowIso,
+          })
+          .eq("clinic_id", context.clinicId)
+          .eq("id", threadId),
+      ]);
+      if (messageError) {
+        throwIfEvolutionSchemaMissing(messageError);
+        throw messageError;
+      }
+      if (threadUpdateError) {
+        throwIfEvolutionSchemaMissing(threadUpdateError);
+        throw threadUpdateError;
+      }
+
+      if (providerError) {
+        throw providerError;
+      }
+
+      res.status(201).json({
+        message: inboxMessageToResponse(message as InboxMessageRow),
+      });
+    } catch (error) {
+      try {
+        throwIfEvolutionSchemaMissing(error);
+      } catch (mappedError) {
+        handleRouteError(res, mappedError, "POST /api/inbox/threads/:threadId/messages");
+        return;
+      }
+      handleRouteError(res, error, "POST /api/inbox/threads/:threadId/messages");
     }
   });
 

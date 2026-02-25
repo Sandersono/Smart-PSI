@@ -576,7 +576,7 @@ describe("tenant subscription Asaas sync", () => {
 
   it("syncs tenant subscription from Asaas on superadmin endpoint", async () => {
     const clinicId = "22222222-2222-4222-8222-222222222222";
-    const fetchMock = vi.fn(async (input: string | URL) => {
+    const fetchMock = vi.fn(async (input: string | URL, _init?: RequestInit) => {
       const url = String(input);
       if (url.includes("/subscriptions/sub_sync_1")) {
         return new Response(
@@ -711,6 +711,224 @@ describe("tenant subscription access lock", () => {
     const response = await request(app).get("/api/me").set("x-user-id", "pro-user");
     expect(response.status).toBe(200);
     expect(response.body?.clinic_id).toBe("clinic-1");
+  });
+});
+
+describe("Evolution inbox core", () => {
+  it("ingests evolution webhook and creates inbox thread/message", async () => {
+    const clinicId = "33333333-3333-4333-8333-333333333333";
+    const { app, db } = await createTestApp({
+      env: {
+        NODE_ENV: "production",
+        FEATURE_GOOGLE_ENABLED: "false",
+        FEATURE_ASAAS_ENABLED: "false",
+      },
+      seed: {
+        clinic_evolution_connections: [
+          {
+            clinic_id: clinicId,
+            api_base_url: "https://evolution.example",
+            instance_name: "smartpsi",
+            api_token_encrypted: "encrypted-token",
+            webhook_secret: "evo-secret",
+            status: "connected",
+          },
+        ],
+      },
+    });
+
+    const response = await request(app)
+      .post(`/api/integrations/evolution/webhook?clinic_id=${clinicId}`)
+      .set("x-evolution-token", "evo-secret")
+      .send({
+        event: "messages.upsert",
+        data: {
+          key: {
+            id: "msg_ext_1",
+            remoteJid: "5511999999999@s.whatsapp.net",
+            fromMe: false,
+          },
+          pushName: "Contato Teste",
+          messageTimestamp: 1760000000,
+          message: {
+            conversation: "Ola, preciso de ajuda",
+          },
+        },
+      });
+
+    expect(response.status).toBe(200);
+    expect(response.body?.success).toBe(true);
+    expect(db.inbox_threads.length).toBe(1);
+    expect(db.inbox_messages.length).toBe(1);
+    expect(db.inbox_threads[0]).toMatchObject({
+      clinic_id: clinicId,
+      external_thread_id: "5511999999999@s.whatsapp.net",
+      contact_name: "Contato Teste",
+      unread_count: 1,
+    });
+    expect(db.inbox_messages[0]).toMatchObject({
+      clinic_id: clinicId,
+      direction: "inbound",
+      content: "Ola, preciso de ajuda",
+      external_message_id: "msg_ext_1",
+    });
+  });
+
+  it("lists inbox threads only for current clinic and marks thread as read", async () => {
+    const clinicOne = "44444444-4444-4444-8444-444444444444";
+    const clinicTwo = "55555555-5555-4555-8555-555555555555";
+    const { app, db } = await createTestApp({
+      env: {
+        NODE_ENV: "development",
+        ALLOW_DEV_USER_BYPASS: "true",
+      },
+      seed: {
+        clinic_members: [
+          {
+            id: 1,
+            clinic_id: clinicOne,
+            user_id: "pro-user",
+            role: "professional",
+            active: true,
+            created_at: "2026-02-01T00:00:00.000Z",
+          },
+        ],
+        inbox_threads: [
+          {
+            id: 701,
+            clinic_id: clinicOne,
+            channel: "whatsapp",
+            external_thread_id: "5511888888888@s.whatsapp.net",
+            contact_name: "Thread Clinica 1",
+            status: "open",
+            unread_count: 3,
+            labels: [],
+            updated_at: "2026-02-01T00:00:00.000Z",
+          },
+          {
+            id: 702,
+            clinic_id: clinicTwo,
+            channel: "whatsapp",
+            external_thread_id: "5511777777777@s.whatsapp.net",
+            contact_name: "Thread Clinica 2",
+            status: "open",
+            unread_count: 5,
+            labels: [],
+            updated_at: "2026-02-01T00:00:00.000Z",
+          },
+        ],
+      },
+    });
+
+    const listResponse = await request(app).get("/api/inbox/threads").set("x-user-id", "pro-user");
+    expect(listResponse.status).toBe(200);
+    expect(Array.isArray(listResponse.body?.threads)).toBe(true);
+    expect(listResponse.body?.threads).toHaveLength(1);
+    expect(listResponse.body?.threads[0]?.id).toBe(701);
+
+    const readResponse = await request(app)
+      .post("/api/inbox/threads/701/read")
+      .set("x-user-id", "pro-user")
+      .send({});
+    expect(readResponse.status).toBe(200);
+    expect(readResponse.body?.success).toBe(true);
+    expect(db.inbox_threads.find((item) => Number(item.id) === 701)?.unread_count).toBe(0);
+  });
+
+  it("sends outbound inbox message through evolution endpoint", async () => {
+    const clinicId = "66666666-6666-4666-8666-666666666666";
+    const fetchMock = vi.fn(async (input: string | URL, _init?: RequestInit) => {
+      const url = String(input);
+      if (url.includes("/message/sendText/smartpsi-inst")) {
+        return new Response(
+          JSON.stringify({
+            id: "provider-msg-1",
+            key: {
+              id: "provider-msg-1",
+            },
+          }),
+          {
+            status: 200,
+            headers: { "content-type": "application/json" },
+          }
+        );
+      }
+      return new Response(JSON.stringify({}), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      });
+    });
+    vi.stubGlobal("fetch", fetchMock as typeof fetch);
+
+    const { app, db } = await createTestApp({
+      env: {
+        NODE_ENV: "development",
+        ALLOW_DEV_USER_BYPASS: "true",
+      },
+      seed: {
+        clinic_members: [
+          {
+            id: 1,
+            clinic_id: clinicId,
+            user_id: "admin-user",
+            role: "admin",
+            active: true,
+            created_at: "2026-02-01T00:00:00.000Z",
+          },
+        ],
+        inbox_threads: [
+          {
+            id: 801,
+            clinic_id: clinicId,
+            channel: "whatsapp",
+            external_thread_id: "5511999999999@s.whatsapp.net",
+            contact_name: "Paciente Mensagem",
+            status: "open",
+            unread_count: 0,
+            labels: [],
+            updated_at: "2026-02-01T00:00:00.000Z",
+          },
+        ],
+      },
+    });
+
+    const configResponse = await request(app)
+      .put("/api/integrations/evolution/settings")
+      .set("x-user-id", "admin-user")
+      .send({
+        api_base_url: "https://evolution.example",
+        instance_name: "smartpsi-inst",
+        api_token: "token-evolution-123",
+        webhook_secret: "secret-abc",
+      });
+    expect(configResponse.status).toBe(200);
+
+    const sendResponse = await request(app)
+      .post("/api/inbox/threads/801/messages")
+      .set("x-user-id", "admin-user")
+      .send({ content: "Mensagem de teste" });
+    expect(sendResponse.status).toBe(201);
+    expect(sendResponse.body?.message?.direction).toBe("outbound");
+
+    expect(fetchMock).toHaveBeenCalled();
+    const sendCall = fetchMock.mock.calls.find((call) =>
+      String(call[0]).includes("/message/sendText/smartpsi-inst")
+    );
+    expect(sendCall).toBeTruthy();
+
+    const sendBodyRaw = (sendCall?.[1] as RequestInit | undefined)?.body;
+    const sendBody =
+      typeof sendBodyRaw === "string" && sendBodyRaw.length > 0 ? JSON.parse(sendBodyRaw) : {};
+    expect(sendBody.number).toBe("5511999999999");
+    expect(sendBody.text).toBe("Mensagem de teste");
+
+    const outbound = db.inbox_messages.find(
+      (item) => Number(item.thread_id) === 801 && String(item.direction) === "outbound"
+    );
+    expect(outbound).toBeTruthy();
+    expect(outbound?.status).toBe("sent");
+
+    vi.unstubAllGlobals();
   });
 });
 

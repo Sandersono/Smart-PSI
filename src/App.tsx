@@ -14,6 +14,7 @@ import { Patients } from "./components/Patients";
 import { PatientProfile } from "./components/PatientProfile";
 import { Agenda } from "./components/Agenda";
 import { Financial } from "./components/Financial";
+import { Inbox } from "./components/Inbox";
 import { Settings } from "./components/Settings";
 import { Help } from "./components/Help";
 import { Auth } from "./components/Auth";
@@ -40,6 +41,7 @@ export default function App() {
     | "patients"
     | "patient_profile"
     | "agenda"
+    | "inbox"
     | "financial"
   >("dashboard");
   const [session, setSession] = useState<Session | null>(null);
@@ -370,6 +372,7 @@ export default function App() {
               | "patients"
               | "patient_profile"
               | "agenda"
+              | "inbox"
               | "financial"
           )
         }
@@ -502,6 +505,7 @@ export default function App() {
                 }}
               />
             )}
+            {view === "inbox" && <Inbox accessToken={accessToken} />}
             {view === "financial" && <Financial accessToken={accessToken} role={userRole} />}
             {view === "settings" && (
               <Settings

@@ -5,6 +5,7 @@ import {
   Users,
   CalendarDays,
   Wallet,
+  MessageCircle,
   Settings,
   HelpCircle,
   LogOut,
@@ -38,6 +39,7 @@ export const Sidebar = ({
   const operationalItems = [
     { id: "patients", label: "Pacientes", icon: Users },
     { id: "agenda", label: "Agenda", icon: CalendarDays },
+    { id: "inbox", label: "Atendimento", icon: MessageCircle },
     { id: "financial", label: "Financeiro", icon: Wallet },
     { id: "settings", label: "Configuracoes", icon: Settings },
     { id: "help", label: "Ajuda e LGPD", icon: HelpCircle },

@@ -23,6 +23,7 @@ Aplicacao full-stack (React + Express) para operacao de clinica: pacientes, agen
    - `supabase/migrations/20260222_005_ai_usage_meter.sql`
    - `supabase/migrations/20260224_006_patient_linkage_guardrails.sql`
    - `supabase/migrations/20260225_007_superadmin_platform_foundation.sql`
+   - `supabase/migrations/20260225_008_evolution_inbox_core.sql`
 4. Rode a aplicacao:
    - `npm run dev`
 
@@ -32,6 +33,7 @@ Aplicacao full-stack (React + Express) para operacao de clinica: pacientes, agen
 - Em producao, autenticacao exige `Authorization: Bearer`.
 - `helmet`, `cors` por allow-list, `compression` e rate limit por ambiente.
 - Webhooks Google/Asaas retornam `503` quando token nao configurado.
+- Webhook Evolution valida token por clinica (`webhook_secret`) com fallback em `EVOLUTION_WEBHOOK_TOKEN`.
 - RBAC clinico: secretaria sem leitura/escrita de conteudo clinico de pacientes.
 - Dependencias com overrides para mitigar vulnerabilidades transitivas (`minimatch`/`glob`).
 
@@ -120,3 +122,17 @@ Configure os secrets no GitHub:
 - Sentry opcional:
   - backend: `SENTRY_DSN`
   - frontend: `VITE_SENTRY_DSN`
+
+## Evolution Inbox (core)
+
+- Integracao por clinica:
+  - `GET /api/integrations/evolution/status`
+  - `PUT /api/integrations/evolution/settings`
+  - `POST /api/integrations/evolution/disconnect`
+  - `POST /api/integrations/evolution/webhook?clinic_id=<uuid>`
+- Caixa de atendimento:
+  - `GET /api/inbox/threads`
+  - `GET /api/inbox/threads/:threadId/messages`
+  - `PATCH /api/inbox/threads/:threadId`
+  - `POST /api/inbox/threads/:threadId/read`
+  - `POST /api/inbox/threads/:threadId/messages`
