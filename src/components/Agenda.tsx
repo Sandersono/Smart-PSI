@@ -461,12 +461,12 @@ export const Agenda = ({ accessToken, onStartSession }: AgendaProps) => {
     let scope: ApplyScope = "single";
     if (appointment.series_id) {
       const input = window.prompt(
-        'Excluir recorrencia: "single", "following" (esta e proximas) ou "all" (toda serie).',
+        'Excluir recorrência: "single", "following" (esta e próximas) ou "all" (toda série).',
         "single"
       );
       if (!input) return;
       if (input !== "single" && input !== "following" && input !== "all") {
-        setFeedback({ type: "error", message: "Escopo invalido. Use single/following/all." });
+        setFeedback({ type: "error", message: "Escopo inválido. Use single/following/all." });
         return;
       }
       scope = input;
@@ -1069,8 +1069,8 @@ export const Agenda = ({ accessToken, onStartSession }: AgendaProps) => {
                   className="apple-input appearance-none"
                 >
                   <option value="single">Editar somente esta</option>
-                  <option value="following">Editar esta e proximas</option>
-                  <option value="all">Editar toda serie</option>
+                  <option value="following">Editar esta e próximas</option>
+                  <option value="all">Editar toda série</option>
                 </select>
               )}
 
@@ -1086,7 +1086,7 @@ export const Agenda = ({ accessToken, onStartSession }: AgendaProps) => {
                       })
                     }
                   />
-                  Sessao recorrente
+                  Sessão recorrente
                 </label>
                 {form.recurrence_enabled && (
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-4">

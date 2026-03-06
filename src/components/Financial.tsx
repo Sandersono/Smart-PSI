@@ -555,9 +555,9 @@ export const Financial = ({ accessToken, role }: FinancialProps) => {
             </div>
           </div>
           <p className="text-sm font-bold text-white/50 uppercase tracking-wider mb-1">
-            Saldo Liquido
+            Saldo Líquido
           </p>
-          <h3 className={cn("text-3xl font-bold", balance < 0 ? "text-error text-white" : "")}>
+          <h3 className={cn("text-3xl font-bold", balance < 0 ? "text-red-400" : "text-white")}>
             R$ {balance.toLocaleString("pt-BR", { minimumFractionDigits: 2 })}
           </h3>
         </div>
@@ -566,15 +566,15 @@ export const Financial = ({ accessToken, role }: FinancialProps) => {
       {canManageFinancial ? (
         <div className="grid grid-cols-1 xl:grid-cols-2 gap-6">
           <div className="glass-panel p-6 space-y-4">
-            <h3 className="text-lg font-bold text-slate-800">Padrao financeiro da clinica</h3>
+            <h3 className="text-lg font-bold text-slate-800">Padrão financeiro da clínica</h3>
             {!billingSettings ? (
-              <p className="text-sm text-slate-500">Carregando configuracoes...</p>
+              <p className="text-sm text-slate-500">Carregando configurações...</p>
             ) : (
               <>
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                   <div className="space-y-1">
                     <label className="text-[10px] font-bold uppercase tracking-widest text-slate-400">
-                      Modo padrao
+                      Modo padrão
                     </label>
                     <select
                       value={billingSettings.default_billing_mode}
@@ -591,13 +591,13 @@ export const Financial = ({ accessToken, role }: FinancialProps) => {
                       }
                       className="apple-input w-full appearance-none"
                     >
-                      <option value="session">Por sessao</option>
+                      <option value="session">Por sessão</option>
                       <option value="monthly">Mensal consolidado</option>
                     </select>
                   </div>
                   <div className="space-y-1">
                     <label className="text-[10px] font-bold uppercase tracking-widest text-slate-400">
-                      Dia de geracao mensal
+                      Dia de geração mensal
                     </label>
                     <input
                       type="number"

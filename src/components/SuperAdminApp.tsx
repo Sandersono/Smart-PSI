@@ -885,20 +885,20 @@ export const SuperAdminApp = () => {
                     key={clinic.id}
                     onClick={() => setSelectedClinicId(clinic.id)}
                     className={`w-full text-left rounded-2xl border p-3 transition-all ${selectedClinicId === clinic.id
-                        ? "border-petroleum bg-petroleum/10"
-                        : "border-slate-200 hover:border-petroleum/40 hover:bg-white"
+                      ? "border-petroleum bg-petroleum/10"
+                      : "border-slate-200 hover:border-petroleum/40 hover:bg-white"
                       }`}
                   >
                     <div className="flex items-start justify-between gap-2">
                       <p className="font-semibold text-sm text-[#1A1A1A] line-clamp-1">{clinic.name}</p>
                       <span
                         className={`text-[11px] px-2 py-0.5 rounded-full font-semibold ${clinic.subscription.status === "active"
-                            ? "bg-success/15 text-success"
-                            : clinic.subscription.status === "trialing"
-                              ? "bg-warning/15 text-warning"
-                              : clinic.subscription.status === "past_due"
-                                ? "bg-warning/20 text-[#9a6b00]"
-                                : "bg-error/15 text-error"
+                          ? "bg-success/15 text-success"
+                          : clinic.subscription.status === "trialing"
+                            ? "bg-warning/15 text-warning"
+                            : clinic.subscription.status === "past_due"
+                              ? "bg-warning/20 text-[#9a6b00]"
+                              : "bg-error/15 text-error"
                           }`}
                       >
                         {statusLabels[clinic.subscription.status]}
@@ -1084,7 +1084,7 @@ export const SuperAdminApp = () => {
                       />
                     </label>
                     <label className="text-sm space-y-1">
-                      <span className="text-slate-600">Graca pagamento</span>
+                      <span className="text-slate-600">Carência de pagamento</span>
                       <input
                         type="date"
                         value={subscriptionForm.payment_grace_until}
@@ -1101,7 +1101,7 @@ export const SuperAdminApp = () => {
 
                   <div className="grid md:grid-cols-[1fr_auto] gap-4 items-end">
                     <label className="text-sm space-y-1">
-                      <span className="text-slate-600">Proxima cobranca</span>
+                      <span className="text-slate-600">Próxima cobrança</span>
                       <input
                         type="date"
                         value={subscriptionForm.next_charge_at}

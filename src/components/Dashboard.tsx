@@ -110,7 +110,7 @@ export const Dashboard = ({
     <div className="space-y-8 pb-12">
       <header className="flex flex-col md:flex-row md:items-center justify-between gap-4">
         <div>
-          <h2 className="text-3xl font-bold tracking-tight">Ola, {userName}</h2>
+          <h2 className="text-3xl font-bold tracking-tight">Olá, {userName}</h2>
           <p className="text-slate-500">
             Resumo de hoje,{" "}
             {new Date().toLocaleDateString("pt-BR", {
@@ -127,14 +127,14 @@ export const Dashboard = ({
             className="bg-white/50 backdrop-blur-sm border border-black/5 px-6 py-3 rounded-2xl font-semibold text-slate-600 flex items-center gap-2 hover:bg-white/80 transition-all"
           >
             <FileText size={20} />
-            Nota rapida
+            Nota rápida
           </button>
           <button
             onClick={onNewSession}
             className="bg-petroleum text-white px-6 py-3 rounded-2xl font-semibold shadow-lg shadow-petroleum/20 flex items-center gap-2 hover:scale-105 active:scale-95 transition-all"
           >
             <Plus size={20} />
-            Nova sessao
+            Nova sessão
           </button>
         </div>
       </header>
@@ -142,9 +142,9 @@ export const Dashboard = ({
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
         <StatCard
           icon={CalendarIcon}
-          label="Sessoes hoje"
+          label="Sessões hoje"
           value={stats?.sessionsToday || 0}
-          subtext={`${stats?.pendingReview || 0} pendentes de revisao`}
+          subtext={`${stats?.pendingReview || 0} pendentes de revisão`}
           trend="up"
           trendValue="12%"
           color="bg-blue-50 text-blue-500"
@@ -153,14 +153,14 @@ export const Dashboard = ({
           icon={Clock}
           label="Tempo economizado"
           value={stats?.timeSaved || "0m"}
-          subtext="Documentacao do dia"
+          subtext="Documentação do dia"
           trend="down"
           trendValue="18m"
           color="bg-emerald-50 text-emerald-500"
         />
         <StatCard
           icon={Zap}
-          label="Processamento medio"
+          label="Processamento médio"
           value={stats?.avgProcessing || "0m"}
           subtext="Dentro da meta (< 2m)"
           color="bg-amber-50 text-amber-500"
@@ -178,7 +178,7 @@ export const Dashboard = ({
             <p className="text-sm font-bold text-white/60 uppercase tracking-wider mb-1">
               Privacidade
             </p>
-            <h3 className="text-2xl font-bold">Audios removidos</h3>
+            <h3 className="text-2xl font-bold">Áudios removidos</h3>
             <p className="text-xs text-white/40 mt-1">100% conformidade LGPD</p>
           </div>
         </div>
@@ -188,7 +188,7 @@ export const Dashboard = ({
         <div className="lg:col-span-2 space-y-8">
           <div className="glass-panel p-8">
             <div className="flex items-center justify-between mb-8">
-              <h3 className="text-xl font-bold">Notas recentes</h3>
+              <h3 className="text-xl font-bold">Prontuários recentes</h3>
               <div className="flex bg-slate-100 p-1 rounded-xl">
                 <button
                   onClick={() => setFilter("all")}
@@ -197,7 +197,7 @@ export const Dashboard = ({
                     filter === "all" ? "bg-white shadow-sm text-petroleum" : "text-slate-500"
                   )}
                 >
-                  Todas
+                  Todos
                 </button>
                 <button
                   onClick={() => setFilter("today")}
@@ -251,7 +251,7 @@ export const Dashboard = ({
               ))}
 
               {filteredNotes.length === 0 && (
-                <div className="py-12 text-center text-slate-400">Nenhum prontuario para este filtro.</div>
+                <div className="py-12 text-center text-slate-400">Nenhum prontuário para este filtro.</div>
               )}
             </div>
 
@@ -259,7 +259,7 @@ export const Dashboard = ({
               onClick={() => setFilter("all")}
               className="w-full mt-8 py-3 text-sm font-bold text-petroleum hover:bg-petroleum/5 rounded-xl transition-all flex items-center justify-center gap-2"
             >
-              Ver todos os prontuarios <ChevronRight size={16} />
+              Ver todos os prontuários <ChevronRight size={16} />
             </button>
           </div>
 
@@ -267,7 +267,7 @@ export const Dashboard = ({
             <div className="flex items-center justify-between mb-8">
               <div>
                 <h3 className="text-xl font-bold">Volume de atendimentos</h3>
-                <p className="text-xs text-slate-400">Ultimos 7 dias</p>
+                <p className="text-xs text-slate-400">Últimos 7 dias</p>
               </div>
             </div>
             <div className="h-[240px] w-full">
@@ -294,22 +294,22 @@ export const Dashboard = ({
               Status do sistema
             </h3>
             <div className="space-y-4">
-              <StatusRow label="Servico de transcricao" />
-              <StatusRow label="Geracao de prontuarios (LLM)" />
-              <StatusRow label="Seguranca de dados" />
+              <StatusRow label="Serviço de transcrição" />
+              <StatusRow label="Geração de prontuários (LLM)" />
+              <StatusRow label="Segurança de dados" />
             </div>
           </div>
 
           <div className="glass-panel p-8 bg-petroleum text-white border-none">
-            <h3 className="text-xl font-bold mb-2">Proxima sessao</h3>
+            <h3 className="text-xl font-bold mb-2">Próxima sessão</h3>
             <p className="text-white/60 text-sm mb-8 leading-relaxed">
-              Inicie a gravacao com um clique. Consentimento do paciente e obrigatorio.
+              Inicie a gravação com um clique. Consentimento do paciente é obrigatório.
             </p>
 
             {!loadingNext && nextApp && (
               <div className="mb-8 p-4 bg-white/10 rounded-2xl border border-white/10">
                 <p className="text-[10px] font-bold text-white/40 uppercase tracking-widest mb-1">
-                  Proxima consulta
+                  Próxima consulta
                 </p>
                 <p className="font-bold text-lg">{nextApp.patient_name || "Paciente"}</p>
                 <p className="text-xs text-white/60 flex items-center gap-1 mt-1">
@@ -335,14 +335,14 @@ export const Dashboard = ({
               className="w-full bg-white text-petroleum py-4 rounded-2xl font-bold shadow-xl hover:scale-105 active:scale-95 transition-all flex items-center justify-center gap-2"
             >
               <Mic size={20} />
-              Iniciar gravacao
+              Iniciar gravação
             </button>
           </div>
         </div>
       </div>
 
       {loadingStats && (
-        <div className="text-xs text-slate-400">Atualizando metricas...</div>
+        <div className="text-xs text-slate-400">Atualizando métricas...</div>
       )}
     </div>
   );
