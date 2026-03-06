@@ -172,14 +172,28 @@ export const Agenda = ({ accessToken, onStartSession }: AgendaProps) => {
   const [me, setMe] = useState<MeContext | null>(null);
   const [isModalOpen, setIsModalOpen] = useState(false);
 
-  const emptyForm: Omit<Appointment, "id" | "created_at" | "updated_at" | "series_sequence" | "is_exception" | "session_mode"> & { session_mode: "in_person" | "online", patient_id: number | "" } = {
+  type AppointmentFormState = Omit<Appointment, "id" | "created_at" | "updated_at" | "series_sequence" | "is_exception" | "session_mode" | "patient_id" | "secondary_patient_id"> & {
+    session_mode: "in_person" | "online";
+    patient_id: number | string;
+    secondary_patient_id: number | string | null;
+    recurrence_enabled?: boolean;
+    recurrence_frequency?: "weekly" | "biweekly" | "monthly";
+    recurrence_until_date?: string;
+    apply_scope?: "single" | "this" | "following" | "all" | "all_future";
+    duration_minutes?: number;
+    clinic_id?: string;
+    series_id?: number | null;
+  };
+
+  const emptyForm: AppointmentFormState = {
     patient_id: "",
     secondary_patient_id: null,
     provider_user_id: "",
     start_time: (() => {
       const d = new Date();
       d.setHours(9, 0, 0, 0);
-      return toDateTimeLocalInput(d);
+      d.setMinutes(d.getMinutes() - d.getTimezoneOffset());
+      return d.toISOString().slice(0, 16);
     })(),
     duration_minutes: 60,
     session_type: "individual",
@@ -192,13 +206,15 @@ export const Agenda = ({ accessToken, onStartSession }: AgendaProps) => {
     recurrence_until_date: (() => {
       const d = new Date();
       d.setMonth(d.getMonth() + 3);
-      return toDateInput(d);
+      d.setMinutes(d.getMinutes() - d.getTimezoneOffset());
+      return d.toISOString().slice(0, 10);
     })(),
     clinic_id: "",
-    series_id: null
+    series_id: null,
+    apply_scope: "single"
   };
 
-  const [form, setForm] = useState(emptyForm);
+  const [form, setForm] = useState<AppointmentFormState>(emptyForm);
   const [editingAppointment, setEditingAppointment] = useState<Appointment | null>(null);
   const [selectedDate, setSelectedDate] = useState(new Date());
   const [viewMode, setViewMode] = useState<AgendaViewMode>("week");
