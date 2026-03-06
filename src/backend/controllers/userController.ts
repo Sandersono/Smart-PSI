@@ -4,6 +4,10 @@ import { handleRouteError, HttpError } from "../utils/index.js";
 
 export async function getCurrentProfile(req: Request, res: Response) {
     try {
+        if (req.tenantAccess?.blocked) {
+            return res.status(403).json({ error: req.tenantAccess.reason });
+        }
+
         const userId = req.userContext?.userId;
         if (!userId) throw new HttpError(401, "Not authorized");
 

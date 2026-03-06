@@ -25,6 +25,25 @@ export async function authenticateToken(req: Request, res: Response, next: NextF
 
     if (!token) {
         if (allowDevUserBypass) {
+            const bypassUserId = req.headers["x-user-id"];
+            if (typeof bypassUserId === "string" && bypassUserId) {
+                const { data: profile } = await supabase
+                    .from("clinic_members")
+                    .select("clinic_id, role")
+                    .eq("user_id", bypassUserId)
+                    .maybeSingle();
+
+                let clinicId = "dev-clinic";
+                let role: UserRole = "professional";
+
+                if (profile) {
+                    clinicId = profile.clinic_id;
+                    role = profile.role as UserRole;
+                }
+
+                req.userContext = { userId: bypassUserId, clinicId, role };
+                return next();
+            }
             if (req.headers["x-dev-admin"] === "true") {
                 req.userContext = { userId: "dev-admin", clinicId: "dev-clinic", role: "admin" };
                 return next();

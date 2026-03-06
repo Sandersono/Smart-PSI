@@ -9,7 +9,7 @@ function cloneRow<T>(value: T): T {
 }
 
 function pickColumns(row: MockRow, columns: string | null): MockRow {
-  if (!columns || columns.trim() === "*" || columns.trim() === "") {
+  if (!columns || columns.trim() === "" || columns.includes("*")) {
     return cloneRow(row);
   }
   const fields = columns
@@ -36,6 +36,7 @@ function createSupabaseMock(seed: Partial<MockDb> = {}) {
   const db: MockDb = {
     clinic_members: cloneRow(seed.clinic_members || []),
     clinics: cloneRow(seed.clinics || []),
+    profiles: cloneRow(seed.profiles || []),
     patients: cloneRow(seed.patients || []),
     appointments: cloneRow(seed.appointments || []),
     financial_records: cloneRow(seed.financial_records || []),
@@ -826,6 +827,20 @@ describe("tenant subscription access lock", () => {
             created_at: "2026-02-01T00:00:00.000Z",
           },
         ],
+        clinics: [
+          {
+            id: "clinic-1",
+            status: "active",
+            subscription_status: "suspended",
+          },
+        ],
+        profiles: [
+          {
+            id: "pro-user",
+            clinic_id: "clinic-1",
+            role: "professional",
+          },
+        ],
         tenant_subscriptions: [
           {
             clinic_id: "clinic-1",
@@ -838,7 +853,7 @@ describe("tenant subscription access lock", () => {
 
     const response = await request(app).get("/api/me").set("x-user-id", "pro-user");
     expect(response.status).toBe(403);
-    expect(String(response.body?.error || "")).toContain("inadimplencia");
+    expect(String(response.body?.error || "")).toContain("Subscription suspended");
   });
 
   it("allows clinic access on past_due while grace period is valid", async () => {
@@ -858,6 +873,20 @@ describe("tenant subscription access lock", () => {
             created_at: "2026-02-01T00:00:00.000Z",
           },
         ],
+        clinics: [
+          {
+            id: "clinic-1",
+            status: "active",
+            subscription_status: "past_due",
+          },
+        ],
+        profiles: [
+          {
+            id: "pro-user",
+            clinic_id: "clinic-1",
+            role: "professional",
+          },
+        ],
         tenant_subscriptions: [
           {
             clinic_id: "clinic-1",
@@ -870,7 +899,7 @@ describe("tenant subscription access lock", () => {
 
     const response = await request(app).get("/api/me").set("x-user-id", "pro-user");
     expect(response.status).toBe(200);
-    expect(response.body?.clinic_id).toBe("clinic-1");
+    expect(response.body?.profile?.clinic_id).toBe("clinic-1");
   });
 });
 
