@@ -18,6 +18,7 @@ import { cn } from "../lib/utils";
 import { ApiError, apiRequest } from "../lib/api";
 import { formatLocalDateInput, formatLocalMonthInput, toLocalDateInput } from "../lib/date";
 import { AiUsageSummary, FinancialRecord, Patient, UserRole } from "../lib/types";
+import { Switch } from "./Switch";
 
 interface FinancialProps {
   accessToken: string;
@@ -63,6 +64,7 @@ type MonthlySummary = {
   gross_amount: number;
   paid_amount: number;
   outstanding_amount: number;
+  appointments?: { id: number; start_time: string; status: string }[];
 };
 
 type Feedback = { type: "success" | "error"; message: string } | null;
@@ -97,6 +99,8 @@ export const Financial = ({ accessToken, role }: FinancialProps) => {
   const [showFilters, setShowFilters] = useState(false);
   const [filterType, setFilterType] = useState<"all" | "income" | "expense">("all");
   const [filterStatus, setFilterStatus] = useState<"all" | "paid" | "pending">("all");
+  const [filterMonth, setFilterMonth] = useState<number>(new Date().getMonth() + 1);
+  const [filterYear, setFilterYear] = useState<number>(new Date().getFullYear());
   const [deletingId, setDeletingId] = useState<number | null>(null);
   const [feedback, setFeedback] = useState<Feedback>(null);
   const [billingSettings, setBillingSettings] = useState<BillingSettings | null>(null);
@@ -290,8 +294,8 @@ export const Financial = ({ accessToken, role }: FinancialProps) => {
         `/api/financial/monthly/generate?month=${monthlyRef}`,
         accessToken,
         {
-        method: "POST",
-        body: JSON.stringify({ patient_id: patientId }),
+          method: "POST",
+          body: JSON.stringify({ patient_id: patientId }),
         }
       );
       await fetchMonthlySummary(patientId, monthlyRef);
@@ -414,18 +418,27 @@ export const Financial = ({ accessToken, role }: FinancialProps) => {
     }
   };
 
-  const totalIncome = records
+  const filteredRecords = records.filter((record) => {
+    // Treat invalid or missing dates as matching, or use UTC conversion
+    const d = new Date(record.date);
+    const recordMonth = d.getMonth() + 1;
+    const recordYear = d.getFullYear();
+    const matchesMonth = isNaN(recordMonth) ? true : recordMonth === filterMonth;
+    const matchesYear = isNaN(recordYear) ? true : recordYear === filterYear;
+
+    const matchesType = filterType === "all" ? true : record.type === filterType;
+    const matchesStatus = filterStatus === "all" ? true : record.status === filterStatus;
+
+    return matchesMonth && matchesYear && matchesType && matchesStatus;
+  });
+
+  const totalIncome = filteredRecords
     .filter((r) => r.type === "income")
     .reduce((acc, r) => acc + Number(r.amount || 0), 0);
-  const totalExpense = records
+  const totalExpense = filteredRecords
     .filter((r) => r.type === "expense")
     .reduce((acc, r) => acc + Number(r.amount || 0), 0);
   const balance = totalIncome - totalExpense;
-  const filteredRecords = records.filter((record) => {
-    const matchesType = filterType === "all" ? true : record.type === filterType;
-    const matchesStatus = filterStatus === "all" ? true : record.status === filterStatus;
-    return matchesType && matchesStatus;
-  });
 
   const handleExportCsv = async () => {
     setIsExporting(true);
@@ -464,11 +477,10 @@ export const Financial = ({ accessToken, role }: FinancialProps) => {
     <div className="space-y-8">
       {feedback && (
         <div
-          className={`px-4 py-3 rounded-xl border flex items-start gap-2 ${
-            feedback.type === "success"
-              ? "bg-success/10 text-success border-success/20"
-              : "bg-error/10 text-error border-error/20"
-          }`}
+          className={`px-4 py-3 rounded-xl border flex items-start gap-2 ${feedback.type === "success"
+            ? "bg-success/10 text-success border-success/20"
+            : "bg-error/10 text-error border-error/20"
+            }`}
         >
           {feedback.type === "success" ? <CheckCircle2 size={18} /> : <AlertCircle size={18} />}
           <span className="text-sm font-medium">{feedback.message}</span>
@@ -531,7 +543,7 @@ export const Financial = ({ accessToken, role }: FinancialProps) => {
           <p className="text-sm font-bold text-slate-400 uppercase tracking-wider mb-1">
             Despesas Mensais
           </p>
-          <h3 className="text-3xl font-bold text-petroleum">
+          <h3 className="text-3xl font-bold text-error">
             R$ {totalExpense.toLocaleString("pt-BR", { minimumFractionDigits: 2 })}
           </h3>
         </div>
@@ -545,7 +557,7 @@ export const Financial = ({ accessToken, role }: FinancialProps) => {
           <p className="text-sm font-bold text-white/50 uppercase tracking-wider mb-1">
             Saldo Liquido
           </p>
-          <h3 className="text-3xl font-bold">
+          <h3 className={cn("text-3xl font-bold", balance < 0 ? "text-error text-white" : "")}>
             R$ {balance.toLocaleString("pt-BR", { minimumFractionDigits: 2 })}
           </h3>
         </div>
@@ -570,10 +582,10 @@ export const Financial = ({ accessToken, role }: FinancialProps) => {
                         setBillingSettings((prev) =>
                           prev
                             ? {
-                                ...prev,
-                                default_billing_mode:
-                                  e.target.value === "monthly" ? "monthly" : "session",
-                              }
+                              ...prev,
+                              default_billing_mode:
+                                e.target.value === "monthly" ? "monthly" : "session",
+                            }
                             : prev
                         )
                       }
@@ -596,12 +608,12 @@ export const Financial = ({ accessToken, role }: FinancialProps) => {
                         setBillingSettings((prev) =>
                           prev
                             ? {
-                                ...prev,
-                                monthly_generation_day: Math.min(
-                                  28,
-                                  Math.max(1, Number(e.target.value || 1))
-                                ),
-                              }
+                              ...prev,
+                              monthly_generation_day: Math.min(
+                                28,
+                                Math.max(1, Number(e.target.value || 1))
+                              ),
+                            }
                             : prev
                         )
                       }
@@ -625,13 +637,12 @@ export const Financial = ({ accessToken, role }: FinancialProps) => {
                       className="apple-input w-full"
                     />
                   </div>
-                  <label className="inline-flex items-center gap-2 text-sm text-slate-600 mt-6">
-                    <input
-                      type="checkbox"
+                  <label className="inline-flex items-center gap-3 text-sm text-slate-600 mt-6 cursor-pointer font-medium">
+                    <Switch
                       checked={billingSettings.auto_generate_monthly}
-                      onChange={(e) =>
+                      onChange={(checked) =>
                         setBillingSettings((prev) =>
-                          prev ? { ...prev, auto_generate_monthly: e.target.checked } : prev
+                          prev ? { ...prev, auto_generate_monthly: checked } : prev
                         )
                       }
                     />
@@ -712,8 +723,8 @@ export const Financial = ({ accessToken, role }: FinancialProps) => {
                         e.target.value === "monthly"
                           ? "monthly"
                           : e.target.value === "session"
-                          ? "session"
-                          : "default"
+                            ? "session"
+                            : "default"
                       )
                     }
                     className="apple-input w-full appearance-none"
@@ -781,13 +792,35 @@ export const Financial = ({ accessToken, role }: FinancialProps) => {
                     R$ {Number(monthlySummary.paid_amount || 0).toLocaleString("pt-BR", { minimumFractionDigits: 2 })}
                   </p>
                 </div>
-                <div className="col-span-2">
-                  <p className="text-slate-400 uppercase text-[10px] font-bold tracking-widest">
-                    Em aberto
-                  </p>
-                  <p className="font-bold text-error text-lg">
-                    R$ {Number(monthlySummary.outstanding_amount || 0).toLocaleString("pt-BR", { minimumFractionDigits: 2 })}
-                  </p>
+                <div className="col-span-2 space-y-2 flex flex-col">
+                  <div>
+                    <p className="text-slate-400 uppercase text-[10px] font-bold tracking-widest">
+                      Em aberto
+                    </p>
+                    <p className="font-bold text-error text-lg">
+                      R$ {Number(monthlySummary.outstanding_amount || 0).toLocaleString("pt-BR", { minimumFractionDigits: 2 })}
+                    </p>
+                  </div>
+                  {monthlySummary.appointments && monthlySummary.appointments.length > 0 && (
+                    <div className="pt-2 border-t border-black/5 mt-1">
+                      <p className="text-slate-400 uppercase text-[10px] font-bold tracking-widest mb-1.5">
+                        Datas das Sessoes
+                      </p>
+                      <div className="flex flex-wrap gap-1.5">
+                        {monthlySummary.appointments.map((app) => (
+                          <span
+                            key={app.id}
+                            className="text-[10px] font-semibold bg-petroleum/5 text-petroleum px-2 py-0.5 rounded-md"
+                          >
+                            {new Date(app.start_time).toLocaleDateString("pt-BR", {
+                              day: "2-digit",
+                              month: "2-digit",
+                            })}
+                          </span>
+                        ))}
+                      </div>
+                    </div>
+                  )}
                 </div>
               </div>
             ) : (
@@ -992,11 +1025,48 @@ export const Financial = ({ accessToken, role }: FinancialProps) => {
                 <option value="pending">Pendente</option>
               </select>
             </div>
+            <div className="space-y-1">
+              <label className="text-[10px] font-bold uppercase tracking-widest text-slate-400">
+                Mes
+              </label>
+              <select
+                value={filterMonth}
+                onChange={(e) => setFilterMonth(Number(e.target.value))}
+                className="apple-input min-w-[140px] appearance-none"
+              >
+                {Array.from({ length: 12 }, (_, i) => i + 1).map((m) => {
+                  const dateInfo = new Date(2000, m - 1, 1);
+                  return (
+                    <option key={m} value={m}>
+                      {dateInfo.toLocaleString("pt-BR", { month: "long" }).charAt(0).toUpperCase() + dateInfo.toLocaleString("pt-BR", { month: "long" }).slice(1)}
+                    </option>
+                  );
+                })}
+              </select>
+            </div>
+            <div className="space-y-1">
+              <label className="text-[10px] font-bold uppercase tracking-widest text-slate-400">
+                Ano
+              </label>
+              <select
+                value={filterYear}
+                onChange={(e) => setFilterYear(Number(e.target.value))}
+                className="apple-input min-w-[120px] appearance-none"
+              >
+                {Array.from({ length: 10 }, (_, i) => new Date().getFullYear() - 3 + i).map((y) => (
+                  <option key={y} value={y}>
+                    {y}
+                  </option>
+                ))}
+              </select>
+            </div>
             <button
               type="button"
               onClick={() => {
                 setFilterType("all");
                 setFilterStatus("all");
+                setFilterMonth(new Date().getMonth() + 1);
+                setFilterYear(new Date().getFullYear());
               }}
               className="px-4 py-2 rounded-xl text-sm font-semibold text-slate-500 hover:bg-white transition-all"
             >
@@ -1010,17 +1080,17 @@ export const Financial = ({ accessToken, role }: FinancialProps) => {
           <div className="overflow-x-auto">
             <table className="w-full text-left border-collapse">
               <thead>
-	                <tr className="text-xs font-bold text-slate-400 uppercase tracking-widest bg-slate-50/50">
-	                  <th className="px-8 py-4">Data</th>
-	                  <th className="px-8 py-4">Descricao</th>
-	                  <th className="px-8 py-4">Categoria</th>
-	                  <th className="px-8 py-4">Valor</th>
-	                  <th className="px-8 py-4">Status</th>
-	                  {canManageFinancial && <th className="px-8 py-4 text-right">Acoes</th>}
-	                </tr>
-	              </thead>
-	              <tbody className="divide-y divide-black/5">
-	                {filteredRecords.map((record) => (
+                <tr className="text-xs font-bold text-slate-400 uppercase tracking-widest bg-slate-50/50">
+                  <th className="px-8 py-4">Data</th>
+                  <th className="px-8 py-4">Descricao</th>
+                  <th className="px-8 py-4">Categoria</th>
+                  <th className="px-8 py-4">Valor</th>
+                  <th className="px-8 py-4">Status</th>
+                  {canManageFinancial && <th className="px-8 py-4 text-right">Acoes</th>}
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-black/5">
+                {filteredRecords.map((record) => (
                   <tr key={record.id} className="hover:bg-white/20 transition-colors group">
                     <td className="px-8 py-5 text-sm font-medium text-slate-500">
                       {new Date(record.date).toLocaleDateString()}
@@ -1065,38 +1135,38 @@ export const Financial = ({ accessToken, role }: FinancialProps) => {
                         {record.status === "paid" ? "Pago" : "Pendente"}
                       </span>
                     </td>
-	                    {canManageFinancial && (
-	                      <td className="px-8 py-5 text-right">
-	                        <div className="flex items-center justify-end gap-2">
-	                          <button
-	                            onClick={() => openEditModal(record)}
-	                            className="p-2 text-slate-500 hover:text-petroleum hover:bg-petroleum/10 rounded-lg transition-all"
-	                            title="Editar"
-	                          >
-	                            <Edit size={16} />
-	                          </button>
-	                          <button
-	                            onClick={() => handleDeleteRecord(Number(record.id))}
-	                            disabled={deletingId === Number(record.id)}
-	                            className="p-2 text-slate-500 hover:text-error hover:bg-error/10 rounded-lg transition-all disabled:opacity-50"
-	                            title="Excluir"
-	                          >
-	                            <Trash2 size={16} />
-	                          </button>
-	                        </div>
-	                      </td>
-	                    )}
-	                  </tr>
-	                ))}
-	                {filteredRecords.length === 0 && (
-	                  <tr>
-	                    <td
-	                      colSpan={canManageFinancial ? 6 : 5}
-	                      className="px-8 py-10 text-center text-slate-500"
-	                    >
-	                      Nenhum lancamento encontrado para o filtro selecionado.
-	                    </td>
-	                  </tr>
+                    {canManageFinancial && (
+                      <td className="px-8 py-5 text-right">
+                        <div className="flex items-center justify-end gap-2">
+                          <button
+                            onClick={() => openEditModal(record)}
+                            className="p-2 text-slate-500 hover:text-petroleum hover:bg-petroleum/10 rounded-lg transition-all"
+                            title="Editar"
+                          >
+                            <Edit size={16} />
+                          </button>
+                          <button
+                            onClick={() => handleDeleteRecord(Number(record.id))}
+                            disabled={deletingId === Number(record.id)}
+                            className="p-2 text-slate-500 hover:text-error hover:bg-error/10 rounded-lg transition-all disabled:opacity-50"
+                            title="Excluir"
+                          >
+                            <Trash2 size={16} />
+                          </button>
+                        </div>
+                      </td>
+                    )}
+                  </tr>
+                ))}
+                {filteredRecords.length === 0 && (
+                  <tr>
+                    <td
+                      colSpan={canManageFinancial ? 6 : 5}
+                      className="px-8 py-10 text-center text-slate-500"
+                    >
+                      Nenhum lancamento encontrado para o filtro selecionado.
+                    </td>
+                  </tr>
                 )}
               </tbody>
             </table>
@@ -1253,8 +1323,8 @@ export const Financial = ({ accessToken, role }: FinancialProps) => {
                   {isSaving
                     ? "Salvando..."
                     : editingRecordId === null
-                    ? "Lancar"
-                    : "Salvar Alteracoes"}
+                      ? "Lancar"
+                      : "Salvar Alteracoes"}
                 </button>
               </div>
             </form>

@@ -16,6 +16,7 @@ import {
 import { cn } from "../lib/utils";
 import { ApiError, apiRequest } from "../lib/api";
 import { ClinicMember, Patient, UserRole } from "../lib/types";
+import { Switch } from "./Switch";
 
 interface AgendaProps {
   accessToken: string;
@@ -170,11 +171,39 @@ export const Agenda = ({ accessToken, onStartSession }: AgendaProps) => {
   const [providers, setProviders] = useState<Provider[]>([]);
   const [me, setMe] = useState<MeContext | null>(null);
   const [isModalOpen, setIsModalOpen] = useState(false);
+
+  const emptyForm: Omit<Appointment, "id" | "created_at" | "updated_at" | "series_sequence" | "is_exception" | "session_mode"> & { session_mode: "in_person" | "online", patient_id: number | "" } = {
+    patient_id: "",
+    secondary_patient_id: null,
+    provider_user_id: "",
+    start_time: (() => {
+      const d = new Date();
+      d.setHours(9, 0, 0, 0);
+      return toDateTimeLocalInput(d);
+    })(),
+    duration_minutes: 60,
+    session_type: "individual",
+    session_mode: "in_person",
+    online_meeting_url: "",
+    status: "scheduled",
+    notes: "",
+    recurrence_enabled: false,
+    recurrence_frequency: "weekly",
+    recurrence_until_date: (() => {
+      const d = new Date();
+      d.setMonth(d.getMonth() + 3);
+      return toDateInput(d);
+    })(),
+    clinic_id: "",
+    series_id: null
+  };
+
+  const [form, setForm] = useState(emptyForm);
   const [editingAppointment, setEditingAppointment] = useState<Appointment | null>(null);
   const [selectedDate, setSelectedDate] = useState(new Date());
   const [viewMode, setViewMode] = useState<AgendaViewMode>("week");
   const [providerFilter, setProviderFilter] = useState<string>("all");
-  const [form, setForm] = useState<AppointmentForm>(emptyForm);
+  const [patientFilter, setPatientFilter] = useState<string>("all");
   const [isLoading, setIsLoading] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
   const [deletingId, setDeletingId] = useState<number | null>(null);
@@ -376,9 +405,9 @@ export const Agenda = ({ accessToken, onStartSession }: AgendaProps) => {
       apply_scope: form.apply_scope,
       recurrence: form.recurrence_enabled
         ? {
-            frequency: form.recurrence_frequency,
-            until_date: form.recurrence_until_date,
-          }
+          frequency: form.recurrence_frequency,
+          until_date: form.recurrence_until_date,
+        }
         : undefined,
     };
 
@@ -516,11 +545,12 @@ export const Agenda = ({ accessToken, onStartSession }: AgendaProps) => {
           const d = new Date(a.start_time);
           const inRange = d >= periodRange.start && d <= periodRange.end;
           if (!inRange) return false;
-          if (providerFilter === "all") return true;
-          return String(a.provider_user_id || "") === providerFilter;
+          if (providerFilter !== "all" && String(a.provider_user_id || "") !== providerFilter) return false;
+          if (patientFilter !== "all" && String(a.patient_id || "") !== patientFilter && String(a.secondary_patient_id || "") !== patientFilter) return false;
+          return true;
         })
         .sort((a, b) => new Date(a.start_time).getTime() - new Date(b.start_time).getTime()),
-    [appointments, periodRange, providerFilter]
+    [appointments, periodRange, providerFilter, patientFilter]
   );
 
   const filteredBlocks = useMemo(
@@ -588,11 +618,10 @@ export const Agenda = ({ accessToken, onStartSession }: AgendaProps) => {
     <div className="space-y-8">
       {feedback && (
         <div
-          className={`px-4 py-3 rounded-xl border flex items-start gap-2 ${
-            feedback.type === "success"
-              ? "bg-success/10 text-success border-success/20"
-              : "bg-error/10 text-error border-error/20"
-          }`}
+          className={`px-4 py-3 rounded-xl border flex items-start gap-2 ${feedback.type === "success"
+            ? "bg-success/10 text-success border-success/20"
+            : "bg-error/10 text-error border-error/20"
+            }`}
         >
           {feedback.type === "success" ? <CheckCircle2 size={18} /> : <AlertCircle size={18} />}
           <span className="text-sm font-medium">{feedback.message}</span>
@@ -644,6 +673,18 @@ export const Agenda = ({ accessToken, onStartSession }: AgendaProps) => {
             <option key={provider.user_id} value={provider.user_id}>
               {(provider.full_name || provider.email || provider.user_id) +
                 ` (${provider.role === "admin" ? "Administrador" : "Profissional"})`}
+            </option>
+          ))}
+        </select>
+        <select
+          value={patientFilter}
+          onChange={(e) => setPatientFilter(e.target.value)}
+          className="apple-input max-w-sm appearance-none"
+        >
+          <option value="all">Todos os pacientes</option>
+          {patients.map((patient) => (
+            <option key={patient.id} value={String(patient.id)}>
+              {patient.name}
             </option>
           ))}
         </select>
@@ -797,8 +838,8 @@ export const Agenda = ({ accessToken, onStartSession }: AgendaProps) => {
                             app.google_sync_status === "synced"
                               ? "bg-success/10 text-success"
                               : app.google_sync_status === "failed"
-                              ? "bg-error/10 text-error"
-                              : "bg-slate-200 text-slate-600"
+                                ? "bg-error/10 text-error"
+                                : "bg-slate-200 text-slate-600"
                           )}
                         >
                           Google {app.google_sync_status === "synced" ? "ok" : app.google_sync_status}
@@ -1018,14 +1059,13 @@ export const Agenda = ({ accessToken, onStartSession }: AgendaProps) => {
               )}
 
               <div className="border border-black/10 rounded-xl p-4 space-y-3">
-                <label className="inline-flex items-center gap-2 text-sm font-semibold text-slate-700">
-                  <input
-                    type="checkbox"
+                <label className="inline-flex items-center gap-3 text-sm font-semibold text-slate-700 cursor-pointer">
+                  <Switch
                     checked={form.recurrence_enabled}
-                    onChange={(e) =>
+                    onChange={(checked) =>
                       setForm({
                         ...form,
-                        recurrence_enabled: e.target.checked,
+                        recurrence_enabled: checked,
                         recurrence_until_date: form.recurrence_until_date || toDateInput(selectedDate),
                       })
                     }

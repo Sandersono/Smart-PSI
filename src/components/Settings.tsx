@@ -25,6 +25,7 @@ import {
 } from "../lib/preferences";
 import { ClinicMember } from "../lib/types";
 import { Note } from "../lib/utils";
+import { Switch } from "./Switch";
 
 interface SettingsProps {
   accessToken: string;
@@ -489,11 +490,10 @@ export const Settings = ({
     <div className="max-w-5xl space-y-8">
       {feedback && (
         <div
-          className={`px-4 py-3 rounded-xl border flex items-start gap-2 ${
-            feedback.type === "success"
+          className={`px-4 py-3 rounded-xl border flex items-start gap-2 ${feedback.type === "success"
               ? "bg-success/10 text-success border-success/20"
               : "bg-error/10 text-error border-error/20"
-          }`}
+            }`}
         >
           {feedback.type === "success" ? <CheckCircle2 size={18} /> : <AlertCircle size={18} />}
           <span className="text-sm font-medium">{feedback.message}</span>
@@ -711,17 +711,16 @@ export const Settings = ({
                     <option value="admin">Administrador</option>
                   </select>
 
-                  <label className="inline-flex items-center gap-2 text-sm text-slate-600">
-                    <input
-                      type="checkbox"
+                  <label className="inline-flex items-center gap-3 text-sm text-slate-600 cursor-pointer font-medium">
+                    <Switch
                       checked={Boolean(member.active)}
-                      onChange={(e) =>
+                      onChange={(checked) =>
                         handleUpdateMember(
                           Number(member.id),
                           member.role === "admin" || member.role === "professional"
                             ? member.role
                             : "secretary",
-                          e.target.checked
+                          checked
                         )
                       }
                     />
@@ -752,15 +751,14 @@ export const Settings = ({
               </h3>
             </div>
             <span
-              className={`text-xs font-bold px-3 py-1 rounded-full ${
-                googleStatus?.connected ? "bg-success/10 text-success" : "bg-slate-700 text-white"
-              }`}
+              className={`text-xs font-bold px-3 py-1 rounded-full ${googleStatus?.connected ? "bg-success/10 text-success" : "bg-slate-700 text-white"
+                }`}
             >
               {loadingGoogle
                 ? "Carregando"
                 : googleStatus?.connected
-                ? "Conectado"
-                : "Desconectado"}
+                  ? "Conectado"
+                  : "Desconectado"}
             </span>
           </div>
 
@@ -838,9 +836,8 @@ export const Settings = ({
               </h3>
             </div>
             <span
-              className={`text-xs font-bold px-3 py-1 rounded-full ${
-                asaasConfigured ? "bg-success/10 text-success" : "bg-slate-700 text-white"
-              }`}
+              className={`text-xs font-bold px-3 py-1 rounded-full ${asaasConfigured ? "bg-success/10 text-success" : "bg-slate-700 text-white"
+                }`}
             >
               {asaasConfigured ? "API ativa" : "API nao configurada"}
             </span>
@@ -896,13 +893,12 @@ export const Settings = ({
                 </label>
                 <div className="flex items-center gap-3 h-[46px] px-4 rounded-xl border border-black/10 bg-white/50">
                   {["email", "sms", "whatsapp"].map((channel) => (
-                    <label key={channel} className="inline-flex items-center gap-1.5 text-sm text-slate-600">
-                      <input
-                        type="checkbox"
+                    <label key={channel} className="inline-flex items-center gap-2 text-sm text-slate-600 cursor-pointer font-medium">
+                      <Switch
                         checked={reminderChannels.includes(channel)}
                         onChange={() => toggleReminderChannel(channel)}
                       />
-                      {channel}
+                      <span className="capitalize">{channel}</span>
                     </label>
                   ))}
                 </div>

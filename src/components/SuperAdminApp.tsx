@@ -19,6 +19,7 @@ import { Brand } from "./Brand";
 import { Toast } from "./Toast";
 import { AUTH_EXPIRED_EVENT, ApiError, apiRequest } from "../lib/api";
 import { supabase } from "../lib/supabaseClient";
+import { Switch } from "./Switch";
 
 type TenantStatus = "trialing" | "active" | "past_due" | "suspended" | "cancelled";
 type BillingProvider = "manual" | "asaas";
@@ -810,12 +811,10 @@ export const SuperAdminApp = () => {
                 {defaultCreateClinicFeatures.map((featureKey) => {
                   const checked = createClinicFeatures.includes(featureKey);
                   return (
-                    <label key={featureKey} className="flex items-center gap-2 text-sm text-slate-700">
-                      <input
-                        type="checkbox"
+                    <label key={featureKey} className="flex items-center gap-3 text-sm text-slate-700 cursor-pointer">
+                      <Switch
                         checked={checked}
                         onChange={() => toggleCreateClinicFeature(featureKey)}
-                        className="h-4 w-4 rounded border-slate-300 text-petroleum focus:ring-petroleum/40"
                       />
                       <span>{featureLabels[featureKey] || featureKey}</span>
                     </label>
@@ -885,24 +884,22 @@ export const SuperAdminApp = () => {
                   <button
                     key={clinic.id}
                     onClick={() => setSelectedClinicId(clinic.id)}
-                    className={`w-full text-left rounded-2xl border p-3 transition-all ${
-                      selectedClinicId === clinic.id
+                    className={`w-full text-left rounded-2xl border p-3 transition-all ${selectedClinicId === clinic.id
                         ? "border-petroleum bg-petroleum/10"
                         : "border-slate-200 hover:border-petroleum/40 hover:bg-white"
-                    }`}
+                      }`}
                   >
                     <div className="flex items-start justify-between gap-2">
                       <p className="font-semibold text-sm text-[#1A1A1A] line-clamp-1">{clinic.name}</p>
                       <span
-                        className={`text-[11px] px-2 py-0.5 rounded-full font-semibold ${
-                          clinic.subscription.status === "active"
+                        className={`text-[11px] px-2 py-0.5 rounded-full font-semibold ${clinic.subscription.status === "active"
                             ? "bg-success/15 text-success"
                             : clinic.subscription.status === "trialing"
-                            ? "bg-warning/15 text-warning"
-                            : clinic.subscription.status === "past_due"
-                            ? "bg-warning/20 text-[#9a6b00]"
-                            : "bg-error/15 text-error"
-                        }`}
+                              ? "bg-warning/15 text-warning"
+                              : clinic.subscription.status === "past_due"
+                                ? "bg-warning/20 text-[#9a6b00]"
+                                : "bg-error/15 text-error"
+                          }`}
                       >
                         {statusLabels[clinic.subscription.status]}
                       </span>
@@ -1179,9 +1176,8 @@ export const SuperAdminApp = () => {
                           </div>
                           <div className="flex items-center gap-3">
                             <span
-                              className={`text-xs font-semibold ${
-                                feature.enabled ? "text-success" : "text-slate-500"
-                              }`}
+                              className={`text-xs font-semibold ${feature.enabled ? "text-success" : "text-slate-500"
+                                }`}
                             >
                               {feature.enabled ? "Ativo" : "Inativo"}
                             </span>
@@ -1189,14 +1185,12 @@ export const SuperAdminApp = () => {
                               type="button"
                               disabled={savingFeatureKey === feature.feature_key}
                               onClick={() => handleToggleFeature(feature.feature_key, !feature.enabled)}
-                              className={`w-11 h-6 rounded-full transition relative ${
-                                feature.enabled ? "bg-success/80" : "bg-slate-300"
-                              } ${savingFeatureKey === feature.feature_key ? "opacity-60" : ""}`}
+                              className={`w-11 h-6 rounded-full transition relative ${feature.enabled ? "bg-success/80" : "bg-slate-300"
+                                } ${savingFeatureKey === feature.feature_key ? "opacity-60" : ""}`}
                             >
                               <span
-                                className={`absolute top-0.5 h-5 w-5 rounded-full bg-white shadow transition ${
-                                  feature.enabled ? "left-5" : "left-0.5"
-                                }`}
+                                className={`absolute top-0.5 h-5 w-5 rounded-full bg-white shadow transition ${feature.enabled ? "left-5" : "left-0.5"
+                                  }`}
                               />
                             </button>
                           </div>

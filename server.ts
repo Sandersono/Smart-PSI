@@ -19,6 +19,13 @@ dotenv.config();
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
+import integrationRoutes from "./src/backend/routes/integrationRoutes.js";
+import userRoutes from "./src/backend/routes/userRoutes.js";
+import { checkIntegrity } from "./src/backend/db.js";
+import { allowDevUserBypass, isProduction, corsAllowedOrigins, rateLimitMax, rateLimitWindowMs, superadminAllowedHosts, superadminBootstrapUserIds } from "./src/backend/config.js";
+import { isMissingRelationError, HttpError, handleRouteError } from "./src/backend/utils/index.js";
+import { authenticateSuperadminUser } from "./src/backend/middlewares/auth.js";
+
 const supabaseUrl = process.env.SUPABASE_URL;
 const supabaseServiceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
 const geminiApiKey = process.env.GEMINI_API_KEY;
@@ -37,23 +44,14 @@ const integrationsSecret = process.env.INTEGRATIONS_ENCRYPTION_KEY || supabaseSe
 const internalJobToken = process.env.INTERNAL_JOB_TOKEN || "";
 const sentryDsn = process.env.SENTRY_DSN || "";
 const nodeEnv = process.env.NODE_ENV || "development";
-const isProduction = nodeEnv === "production";
-const allowDevUserBypass =
-  !isProduction && String(process.env.ALLOW_DEV_USER_BYPASS || "").toLowerCase() === "true";
 const featureGoogleEnabled =
   process.env.FEATURE_GOOGLE_ENABLED === undefined
-    ? !isProduction
+    ? nodeEnv !== "production"
     : String(process.env.FEATURE_GOOGLE_ENABLED).toLowerCase() === "true";
 const featureAsaasEnabled =
   process.env.FEATURE_ASAAS_ENABLED === undefined
-    ? !isProduction
+    ? nodeEnv !== "production"
     : String(process.env.FEATURE_ASAAS_ENABLED).toLowerCase() === "true";
-const corsAllowedOrigins = String(process.env.CORS_ALLOWED_ORIGINS || "")
-  .split(",")
-  .map((item) => item.trim())
-  .filter(Boolean);
-const rateLimitWindowMs = Number(process.env.RATE_LIMIT_WINDOW_MS || "900000");
-const rateLimitMax = Number(process.env.RATE_LIMIT_MAX || "300");
 const frontendSupabaseUrl = process.env.VITE_SUPABASE_URL || "";
 const aiModelName = process.env.AI_MODEL_NAME || "gemini-2.5-flash";
 const aiTokenCostPerMillion = Number(process.env.AI_TOKEN_COST_PER_MILLION || "0");
@@ -75,25 +73,7 @@ function extractHost(value: string | null | undefined) {
   }
 }
 
-const superadminAllowedHosts = Array.from(
-  new Set(
-    [
-      ...String(process.env.SUPERADMIN_ALLOWED_HOSTS || "")
-        .split(",")
-        .map((item) => extractHost(item))
-        .filter((item): item is string => Boolean(item)),
-      extractHost(adminUrl),
-    ].filter((item): item is string => Boolean(item))
-  )
-);
-const superadminBootstrapUserIds = Array.from(
-  new Set(
-    String(process.env.SUPERADMIN_BOOTSTRAP_USER_IDS || "")
-      .split(",")
-      .map((item) => item.trim())
-      .filter(Boolean)
-  )
-);
+
 
 const missingServerEnv = [
   ["SUPABASE_URL", supabaseUrl],
@@ -150,14 +130,6 @@ type EvolutionConnectionStatus = "connected" | "disconnected" | "error";
 type InboxThreadStatus = "open" | "pending" | "resolved" | "blocked";
 type InboxMessageDirection = "inbound" | "outbound" | "system";
 
-class HttpError extends Error {
-  status: number;
-
-  constructor(status: number, message: string) {
-    super(message);
-    this.status = status;
-  }
-}
 
 async function resolveUserId(req: Request): Promise<string | null> {
   const authHeader = req.header("authorization") || "";
@@ -542,8 +514,8 @@ function normalizeInboxLabels(value: unknown): string[] {
   const rawItems = Array.isArray(value)
     ? value
     : typeof value === "string"
-    ? value.split(",")
-    : [];
+      ? value.split(",")
+      : [];
   const normalized = rawItems
     .map((item) => toNullableString(item))
     .filter((item): item is string => Boolean(item))
@@ -918,8 +890,8 @@ function noteStyleInstructions(preferences: AiNotePreferences) {
     preferences.length === "short"
       ? "Mantenha cada campo curto (1 a 2 frases)."
       : preferences.length === "long"
-      ? "Forneca mais contexto (3 a 5 frases por campo), sem inventar fatos."
-      : "Mantenha tamanho medio (2 a 3 frases por campo).";
+        ? "Forneca mais contexto (3 a 5 frases por campo), sem inventar fatos."
+        : "Mantenha tamanho medio (2 a 3 frases por campo).";
 
   return `${toneInstruction} ${lengthInstruction} Responda em Portugues do Brasil.`;
 }
@@ -1017,10 +989,7 @@ function errorCodeOf(error: unknown) {
   );
 }
 
-function isMissingRelationError(error: unknown) {
-  const code = errorCodeOf(error);
-  return code === "42P01" || code === "PGRST205";
-}
+
 
 type RegisterAiUsageEventPayload = {
   context: UserContext;
@@ -1166,26 +1135,6 @@ function dayRangeUtc(dayOffset: number) {
   return { startIso: start.toISOString(), endIso: end.toISOString(), date: start };
 }
 
-function handleRouteError(res: Response, error: unknown, context: string) {
-  if (error instanceof HttpError) {
-    res.status(error.status).json({ error: error.message });
-    return;
-  }
-  if (sentryDsn) {
-    Sentry.captureException(
-      error instanceof Error ? error : new Error(`Unhandled error in ${context}: ${String(error)}`)
-    );
-  }
-  console.error(
-    JSON.stringify({
-      level: "error",
-      event: "route_error",
-      context,
-      message: error instanceof Error ? error.message : String(error),
-    })
-  );
-  res.status(500).json({ error: "Internal server error" });
-}
 
 function toUuidOrNull(value: unknown) {
   const raw = toNullableString(value);
@@ -2015,9 +1964,9 @@ async function reconcileTenantSubscriptionFromAsaasWebhook(
     toNullableString(paymentPayload.status);
   const nextDueDate = toDateOnly(
     subscriptionPayload.nextDueDate ||
-      subscriptionPayload.next_due_date ||
-      payload.nextDueDate ||
-      payload.next_due_date
+    subscriptionPayload.next_due_date ||
+    payload.nextDueDate ||
+    payload.next_due_date
   );
   const cancellationReason =
     toNullableString(subscriptionPayload.cancellationReason) ||
@@ -2070,7 +2019,7 @@ async function reconcileTenantSubscriptionFromAsaasWebhook(
     const graceUntil =
       mappedStatus === "past_due"
         ? addDaysToDateOnlyIso(nextDueDate || new Date().toISOString().slice(0, 10), 7) ||
-          toNullableString(target.payment_grace_until)
+        toNullableString(target.payment_grace_until)
         : null;
 
     const metadataBase =
@@ -2718,8 +2667,8 @@ async function syncAppointmentToGoogle(
     const method = currentEventId ? "PATCH" : "POST";
     const path = currentEventId
       ? `/calendar/v3/calendars/${encodeURIComponent(calendarId)}/events/${encodeURIComponent(
-          currentEventId
-        )}`
+        currentEventId
+      )}`
       : `/calendar/v3/calendars/${encodeURIComponent(calendarId)}/events`;
     const result = await googleFetch(token.accessToken, path, {
       method,
@@ -2992,8 +2941,8 @@ async function generateMonthlyStatementsForPeriod(
       summary.outstanding_amount <= 0
         ? "settled"
         : summary.paid_amount > 0
-        ? "partial"
-        : "open";
+          ? "partial"
+          : "open";
 
     const { data: statementData, error: statementError } = await supabase
       .from("patient_monthly_statements")
@@ -3236,7 +3185,7 @@ async function syncTenantSubscriptionFromAsaas(clinicId: string) {
   const paymentGraceUntil =
     mappedStatus === "past_due"
       ? addDaysToDateOnlyIso(nextDueDate || nowIso.slice(0, 10), 7) ||
-        toNullableString(current.payment_grace_until)
+      toNullableString(current.payment_grace_until)
       : null;
 
   const metadataBase =
@@ -3373,8 +3322,16 @@ export async function createApp(options: CreateAppOptions = {}) {
   app.use(compression());
   app.use(globalLimiter);
 
+  app.use((req, res, next) => {
+    if (req.headers["content-type"] && req.headers["content-type"].startsWith("application/json")) {
+      if (!req.headers["content-type"].includes("charset")) {
+        req.headers["content-type"] = req.headers["content-type"] + "; charset=utf-8";
+      }
+    }
+    next();
+  });
   app.use(express.json({ limit: "50mb" }));
-
+  app.use(express.urlencoded({ extended: true, limit: "50mb" }));
   app.get("/api/health", (_req, res) => {
     res.json({
       status: "ok",
@@ -3392,16 +3349,8 @@ export async function createApp(options: CreateAppOptions = {}) {
     });
   });
 
-  app.get("/api/me", sensitiveLimiter, async (req, res) => {
-    const context = await requireUserContext(req, res);
-    if (!context) return;
-
-    res.json({
-      user_id: context.userId,
-      clinic_id: context.clinicId,
-      role: context.role,
-    });
-  });
+  app.use("/api", userRoutes);
+  app.use("/api/integrations", integrationRoutes);
 
   app.get("/api/superadmin/me", sensitiveLimiter, async (req, res) => {
     const context = await requireSuperadminContext(req, res);
@@ -3546,23 +3495,23 @@ export async function createApp(options: CreateAppOptions = {}) {
       const [subscriptionsResult, membersResult, flagsResult] = await Promise.all([
         clinicIds.length > 0
           ? supabase
-              .from("tenant_subscriptions")
-              .select(
-                "clinic_id, plan_code, status, billing_provider, asaas_customer_id, asaas_subscription_id, trial_ends_at, current_period_start, current_period_end, payment_grace_until, next_charge_at, blocked_at, suspended_reason, updated_at"
-              )
-              .in("clinic_id", clinicIds)
+            .from("tenant_subscriptions")
+            .select(
+              "clinic_id, plan_code, status, billing_provider, asaas_customer_id, asaas_subscription_id, trial_ends_at, current_period_start, current_period_end, payment_grace_until, next_charge_at, blocked_at, suspended_reason, updated_at"
+            )
+            .in("clinic_id", clinicIds)
           : Promise.resolve({ data: [], error: null }),
         clinicIds.length > 0
           ? supabase
-              .from("clinic_members")
-              .select("clinic_id, role, active")
-              .in("clinic_id", clinicIds)
+            .from("clinic_members")
+            .select("clinic_id, role, active")
+            .in("clinic_id", clinicIds)
           : Promise.resolve({ data: [], error: null }),
         clinicIds.length > 0
           ? supabase
-              .from("tenant_feature_flags")
-              .select("clinic_id, enabled")
-              .in("clinic_id", clinicIds)
+            .from("tenant_feature_flags")
+            .select("clinic_id, enabled")
+            .in("clinic_id", clinicIds)
           : Promise.resolve({ data: [], error: null }),
       ]);
 
@@ -3801,12 +3750,12 @@ export async function createApp(options: CreateAppOptions = {}) {
 
       const enabledFeatureKeys = Array.isArray(req.body?.enabled_features)
         ? Array.from(
-            new Set(
-              req.body.enabled_features
-                .map((item: unknown) => normalizeFeatureKey(item))
-                .filter((item: string | null): item is string => Boolean(item))
-            )
+          new Set(
+            req.body.enabled_features
+              .map((item: unknown) => normalizeFeatureKey(item))
+              .filter((item: string | null): item is string => Boolean(item))
           )
+        )
         : [];
 
       if (enabledFeatureKeys.length > 0) {
@@ -4716,9 +4665,8 @@ export async function createApp(options: CreateAppOptions = {}) {
 
       if (queryText) {
         threads = threads.filter((thread) => {
-          const haystack = `${thread.contact_name || ""} ${thread.contact_phone || ""} ${
-            thread.last_message_preview || ""
-          }`.toLowerCase();
+          const haystack = `${thread.contact_name || ""} ${thread.contact_phone || ""} ${thread.last_message_preview || ""
+            }`.toLowerCase();
           return haystack.includes(queryText);
         });
       }
@@ -5842,11 +5790,11 @@ export async function createApp(options: CreateAppOptions = {}) {
         context.role === "secretary"
           ? Promise.resolve({ data: [], error: null } as { data: any[]; error: null })
           : supabase
-              .from("notes")
-              .select("*")
-              .eq("clinic_id", context.clinicId)
-              .eq("patient_id", patientId)
-              .order("created_at", { ascending: false }),
+            .from("notes")
+            .select("*")
+            .eq("clinic_id", context.clinicId)
+            .eq("patient_id", patientId)
+            .order("created_at", { ascending: false }),
       ]);
 
       if (appointmentsResult.error) throw appointmentsResult.error;
@@ -5860,6 +5808,87 @@ export async function createApp(options: CreateAppOptions = {}) {
       });
     } catch (error) {
       handleRouteError(res, error, "GET /api/patients/:id/history");
+    }
+  });
+
+  // --- Clinical Note Templates ---
+  app.get("/api/clinic/note-templates", async (req, res) => {
+    const context = await requireUserContext(req, res, ["admin", "professional"]);
+    if (!context) return;
+    try {
+      const { data, error } = await supabase
+        .from("clinic_note_templates")
+        .select("*")
+        .eq("clinic_id", context.clinicId)
+        .order("created_at", { ascending: false });
+      if (error) throw error;
+      res.json(data || []);
+    } catch (error) {
+      handleRouteError(res, error, "GET /api/clinic/note-templates");
+    }
+  });
+
+  app.post("/api/clinic/note-templates", async (req, res) => {
+    const context = await requireUserContext(req, res, ["admin", "professional"]);
+    if (!context) return;
+    const { name, content } = req.body;
+    if (!name || !content) return res.status(400).json({ error: "Missing name or content" });
+    try {
+      const { data, error } = await supabase
+        .from("clinic_note_templates")
+        .insert({ clinic_id: context.clinicId, user_id: context.userId, name, content })
+        .select()
+        .single();
+      if (error) throw error;
+      res.json(data);
+    } catch (error) {
+      handleRouteError(res, error, "POST /api/clinic/note-templates");
+    }
+  });
+
+  app.delete("/api/clinic/note-templates/:id", async (req, res) => {
+    const context = await requireUserContext(req, res, ["admin", "professional"]);
+    if (!context) return;
+    try {
+      const { error } = await supabase
+        .from("clinic_note_templates")
+        .delete()
+        .eq("id", Number(req.params.id))
+        .eq("clinic_id", context.clinicId);
+      if (error) throw error;
+      res.json({ success: true });
+    } catch (error) {
+      handleRouteError(res, error, "DELETE /api/clinic/note-templates/:id");
+    }
+  });
+
+  // --- AI Utilities ---
+  app.post("/api/ai/summarize", async (req, res) => {
+    const context = await requireUserContext(req, res, ["admin", "professional"]);
+    if (!context) return;
+
+    // @ts-ignore - avoid typescript complaining if ai is not strictly typed globally
+    if (typeof ai === "undefined" || !ai) {
+      return res.status(503).json({ error: "Serviço de IA indisponivel no servidor." });
+    }
+
+    const { text, type } = req.body;
+    if (!text) return res.status(400).json({ error: "Missing text payload" });
+
+    try {
+      const prompt = type === "grammar"
+        ? `Você é um assistente clínico. Corrija ortografia, gramática e deixe este texto um pouco mais profissional, sem alterar fatos e devolvendo apenas o texto corrigido, sem introduções:\n\n${text}`
+        : `Você é um assistente clínico auxiliando na escrita de um prontuário. Extraia e resuma o texto abaixo, de forma bem profissional, focando em: 1) Queixa, 2) Intervenção Realizada, 3) Próximo foco. Devolva apenas os três pontos diretos.\n\n${text}`;
+
+      // @ts-ignore
+      const response = await ai.models.generateContent({
+        model: aiModelName || "gemini-2.5-flash",
+        contents: prompt
+      });
+
+      res.json({ result: response.text });
+    } catch (error) {
+      handleRouteError(res, error, "POST /api/ai/summarize");
     }
   });
 
@@ -6226,8 +6255,8 @@ export async function createApp(options: CreateAppOptions = {}) {
         const secondaryName =
           sessionType === "couple" && secondaryPatientId
             ? (
-                await buildPatientNameMap(context.clinicId, [secondaryPatientId])
-              ).get(secondaryPatientId) || null
+              await buildPatientNameMap(context.clinicId, [secondaryPatientId])
+            ).get(secondaryPatientId) || null
             : null;
         const { data: createdAppointment, error: createdError } = await supabase
           .from("appointments")
@@ -6422,21 +6451,21 @@ export async function createApp(options: CreateAppOptions = {}) {
       const targetRows =
         (scope === "all" || scope === "following") && current.series_id
           ? await (async () => {
-              const { data: seriesRows, error: seriesRowsError } = await supabase
-                .from("appointments")
-                .select("*")
-                .eq("clinic_id", context.clinicId)
-                .eq("series_id", current.series_id)
-                .order("series_sequence", { ascending: true });
-              if (seriesRowsError) throw seriesRowsError;
-              if (scope === "following") {
-                const currentSequence = Number(current.series_sequence || 0);
-                return (seriesRows ?? []).filter(
-                  (item) => Number(item.series_sequence || 0) >= currentSequence
-                );
-              }
-              return seriesRows ?? [];
-            })()
+            const { data: seriesRows, error: seriesRowsError } = await supabase
+              .from("appointments")
+              .select("*")
+              .eq("clinic_id", context.clinicId)
+              .eq("series_id", current.series_id)
+              .order("series_sequence", { ascending: true });
+            if (seriesRowsError) throw seriesRowsError;
+            if (scope === "following") {
+              const currentSequence = Number(current.series_sequence || 0);
+              return (seriesRows ?? []).filter(
+                (item) => Number(item.series_sequence || 0) >= currentSequence
+              );
+            }
+            return seriesRows ?? [];
+          })()
           : [current];
 
       const startShiftMs =
@@ -7265,10 +7294,10 @@ export async function createApp(options: CreateAppOptions = {}) {
         charge_synced: true,
         tenant_subscription: tenantReconcile.handled
           ? {
-              clinic_id: tenantReconcile.clinicId,
-              asaas_subscription_id: tenantReconcile.asaasSubscriptionId,
-              status: tenantReconcile.status,
-            }
+            clinic_id: tenantReconcile.clinicId,
+            asaas_subscription_id: tenantReconcile.asaasSubscriptionId,
+            status: tenantReconcile.status,
+          }
           : null,
       });
     } catch (error) {

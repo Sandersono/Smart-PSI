@@ -10,6 +10,7 @@ import {
   User,
   CheckCircle2,
   Trash2,
+  BookOpenText
 } from "lucide-react";
 import { cn, Note } from "../lib/utils";
 import { apiRequest } from "../lib/api";
@@ -39,9 +40,12 @@ export const NoteEditor = ({
   onReprocess,
 }: NoteEditorProps) => {
   const [patients, setPatients] = React.useState<any[]>([]);
+  const [templates, setTemplates] = React.useState<any[]>([]);
+  const [isProcessingAI, setIsProcessingAI] = React.useState(false);
 
   React.useEffect(() => {
     fetchPatients();
+    fetchTemplates();
   }, [accessToken]);
 
   const fetchPatients = async () => {
@@ -50,6 +54,33 @@ export const NoteEditor = ({
       setPatients(data || []);
     } catch (error) {
       console.error("Failed to load patients", error);
+    }
+  };
+
+  const fetchTemplates = async () => {
+    try {
+      const data = await apiRequest<any[]>("/api/clinic/note-templates", accessToken);
+      setTemplates(data || []);
+    } catch (error) {
+      console.error("Failed to load templates", error);
+    }
+  };
+
+  const handleAI = async (fieldId: string, type: "grammar" | "summarize") => {
+    const text = (note as any)[fieldId];
+    if (!text) return;
+    setIsProcessingAI(true);
+    try {
+      const { result } = await apiRequest<{ result: string }>("/api/ai/summarize", accessToken, {
+        method: "POST",
+        body: JSON.stringify({ text, type })
+      });
+      onChange({ ...note, [fieldId]: result });
+    } catch (err) {
+      console.error("AI Error", err);
+      alert("Erro ao usar inteligencia artificial.");
+    } finally {
+      setIsProcessingAI(false);
     }
   };
 
@@ -126,11 +157,10 @@ export const NoteEditor = ({
         </button>
         <div className="flex items-center gap-3 flex-wrap">
           <span
-            className={`text-xs font-bold px-3 py-1.5 rounded-full uppercase tracking-widest ${
-              note.status === "final"
-                ? "bg-success/10 text-success"
-                : "bg-slate-700 text-white"
-            }`}
+            className={`text-xs font-bold px-3 py-1.5 rounded-full uppercase tracking-widest ${note.status === "final"
+              ? "bg-success/10 text-success"
+              : "bg-slate-700 text-white"
+              }`}
           >
             {note.status === "final" ? "Final" : "Rascunho"}
           </span>
@@ -166,8 +196,8 @@ export const NoteEditor = ({
             {isSaving
               ? "Salvando..."
               : note.status === "final"
-              ? "Salvar Alteracoes"
-              : "Salvar Rascunho"}
+                ? "Salvar Alteracoes"
+                : "Salvar Rascunho"}
           </button>
           {note.status !== "final" && (
             <button
@@ -183,7 +213,7 @@ export const NoteEditor = ({
       </div>
 
       <div className="glass-panel p-10 space-y-10">
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-8">
           <div className="space-y-3">
             <label className="text-xs font-bold uppercase tracking-[0.15em] text-slate-400 flex items-center gap-2">
               <User size={14} />
@@ -211,6 +241,26 @@ export const NoteEditor = ({
               {new Date(note.created_at || new Date().toISOString()).toLocaleString()}
             </div>
           </div>
+          <div className="space-y-3">
+            <label className="text-xs font-bold uppercase tracking-[0.15em] text-slate-400 flex items-center gap-2">
+              <BookOpenText size={14} />
+              Modelo de Prontuario
+            </label>
+            <select
+              onChange={(e) => {
+                const t = templates.find((x) => String(x.id) === e.target.value);
+                if (t && window.confirm("Deseja aplicar este modelo? O conteudo atual de 'Queixa Principal' sera substituido.")) {
+                  onChange({ ...note, complaint: t.content });
+                }
+              }}
+              className="apple-input w-full text-lg font-semibold appearance-none"
+            >
+              <option value="">Anotacao livre...</option>
+              {templates.map((t) => (
+                <option key={t.id} value={t.id}>{t.name}</option>
+              ))}
+            </select>
+          </div>
         </div>
 
         {note.status !== "final" && !canFinalize && (
@@ -228,7 +278,27 @@ export const NoteEditor = ({
           ].map((field) => (
             <div key={field.id} className="space-y-3">
               <label className="text-xs font-bold uppercase tracking-[0.15em] text-slate-400 flex items-center justify-between">
-                {field.label}
+                <div className="flex items-center gap-3 flex-wrap">
+                  {field.label}
+                  {field.id !== "observations" && (
+                    <div className="flex gap-2">
+                      <button
+                        onClick={() => handleAI(field.id, "grammar")}
+                        disabled={isProcessingAI || !(note as any)[field.id]}
+                        className="text-[10px] font-bold px-2 py-1 rounded bg-slate-100 text-slate-600 hover:bg-slate-200 disabled:opacity-50 transition-colors"
+                      >
+                        Revisar
+                      </button>
+                      <button
+                        onClick={() => handleAI(field.id, "summarize")}
+                        disabled={isProcessingAI || !(note as any)[field.id]}
+                        className="text-[10px] font-bold px-2 py-1 rounded bg-indigo-50 text-indigo-600 hover:bg-indigo-100 disabled:opacity-50 transition-colors"
+                      >
+                        Resumir(IA)
+                      </button>
+                    </div>
+                  )}
+                </div>
                 {String((note as any)[field.id] || "").includes("Nao identificado") && (
                   <span className="text-error flex items-center gap-1 normal-case font-medium tracking-normal">
                     <AlertCircle size={14} />

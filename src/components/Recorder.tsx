@@ -5,6 +5,7 @@ import { cn } from "../lib/utils";
 import { apiRequest } from "../lib/api";
 import { readNotePreferences } from "../lib/preferences";
 import { processAudioToNote } from "../services/aiService";
+import { Switch } from "./Switch";
 
 interface RecorderProps {
   accessToken: string;
@@ -297,13 +298,10 @@ export const Recorder = ({
             )}
           </div>
 
-          <div className="flex items-center gap-4 p-5 bg-white/50 backdrop-blur-sm rounded-2xl border border-white/60 max-w-md">
-            <input
-              type="checkbox"
-              id="consent"
+          <div className="flex items-center gap-4 p-5 bg-white/50 backdrop-blur-sm rounded-2xl border border-white/60 max-w-md cursor-pointer" onClick={() => setConsent(!consent)}>
+            <Switch
               checked={consent}
-              onChange={(e) => setConsent(e.target.checked)}
-              className="w-6 h-6 rounded-lg border-slate-300 text-petroleum focus:ring-petroleum transition-all cursor-pointer"
+              onChange={(checked) => setConsent(checked)}
             />
             <label
               htmlFor="consent"
