@@ -193,7 +193,7 @@ export const PatientProfile = ({
       setHistory(data || emptyHistory);
     } catch (error) {
       console.error("Failed to load patient history", error);
-      setFeedback({ type: "error", message: "Falha ao carregar hist�rico do paciente." });
+      setFeedback({ type: "error", message: "Falha ao carregar histórico do paciente." });
     } finally {
       setIsLoading(false);
     }
@@ -279,7 +279,7 @@ export const PatientProfile = ({
 
   const handleSaveCadastro = async () => {
     if (!patientForm.name.trim()) {
-      setFeedback({ type: "error", message: "Nome do paciente � obrigat�rio." });
+      setFeedback({ type: "error", message: "Nome do paciente é obrigatório." });
       return;
     }
     setIsSaving(true);
@@ -324,11 +324,11 @@ export const PatientProfile = ({
     if (!canAccessClinical) return;
     setIsSaving(true);
     try {
-      await persistPatient({ notes: prontuarioText.trim() || null }, "Prontu�rio cl�nico atualizado.");
+      await persistPatient({ notes: prontuarioText.trim() || null }, "Prontuário clínico atualizado.");
     } catch (error: unknown) {
       setFeedback({
         type: "error",
-        message: error instanceof ApiError ? error.message : "Falha ao salvar prontu�rio cl�nico.",
+        message: error instanceof ApiError ? error.message : "Falha ao salvar prontuário clínico.",
       });
     } finally {
       setIsSaving(false);
@@ -338,7 +338,7 @@ export const PatientProfile = ({
   const handleSavePreferencias = async () => {
     const fee = Number(preferencesForm.session_fee || 0);
     if (!Number.isFinite(fee) || fee < 0) {
-      setFeedback({ type: "error", message: "Valor por sess�o inv�lido." });
+      setFeedback({ type: "error", message: "Valor por sessão inválido." });
       return;
     }
     setIsSaving(true);
@@ -351,12 +351,12 @@ export const PatientProfile = ({
               ? null
               : preferencesForm.billing_mode_override,
         },
-        "Prefer�ncias financeiras atualizadas."
+        "Preferências financeiras atualizadas."
       );
     } catch (error: unknown) {
       setFeedback({
         type: "error",
-        message: error instanceof ApiError ? error.message : "Falha ao salvar prefer�ncias.",
+        message: error instanceof ApiError ? error.message : "Falha ao salvar preferências.",
       });
     } finally {
       setIsSaving(false);
@@ -382,11 +382,11 @@ export const PatientProfile = ({
       `Email: ${patientData.email || "-"}`,
       `Telefone: ${patientData.phone || "-"}`,
       `CPF: ${patientData.cpf || "-"}`,
-      `Sess�es registradas: ${history.appointments.length}`,
-      `Registros de prontu�rio: ${history.notes.length}`,
-      `Lan�amentos financeiros: ${history.financial.length}`,
+      `Sessões registradas: ${history.appointments.length}`,
+      `Registros de prontuário: ${history.notes.length}`,
+      `Lançamentos financeiros: ${history.financial.length}`,
       "",
-      "Prontu�rio cl�nico:",
+      "Prontuário clínico:",
       prontuarioText || "Sem texto complementar.",
       "",
       "Anamnese:",
@@ -430,24 +430,24 @@ export const PatientProfile = ({
     ...(canAccessClinical
       ? [
         { id: "anamnese", label: "Anamnese", icon: ClipboardList },
-        { id: "prontuario", label: "Prontu�rio", icon: BookOpenText },
+        { id: "prontuario", label: "Prontuário", icon: BookOpenText },
       ]
       : []),
-    { id: "sessoes", label: "Sess�es", icon: Clock3 },
+    { id: "sessoes", label: "Sessões", icon: Clock3 },
     { id: "financeiro", label: "Financeiro", icon: DollarSign },
     { id: "documentos", label: "Documentos", icon: FolderOpen },
-    { id: "preferencias", label: "Prefer�ncias", icon: SlidersHorizontal },
+    { id: "preferencias", label: "Preferências", icon: SlidersHorizontal },
   ] as const;
 
   const renderPrincipal = () => (
     <div className="space-y-6">
       <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
         <div className="glass-card p-5">
-          <p className="text-xs uppercase tracking-wider text-slate-500 font-bold">Sess�es</p>
+          <p className="text-xs uppercase tracking-wider text-slate-500 font-bold">Sessões</p>
           <p className="text-2xl font-bold text-petroleum mt-2">{history.appointments.length}</p>
         </div>
         <div className="glass-card p-5">
-          <p className="text-xs uppercase tracking-wider text-slate-500 font-bold">Em Aberto (M�s)</p>
+          <p className="text-xs uppercase tracking-wider text-slate-500 font-bold">Em Aberto (Mês)</p>
           <p className="text-2xl font-bold text-error mt-2">
             R$ {Number(monthlySummary?.outstanding_amount || 0).toLocaleString("pt-BR", { minimumFractionDigits: 2 })}
           </p>
@@ -461,7 +461,7 @@ export const PatientProfile = ({
       </div>
 
       <div className="glass-panel p-6 space-y-4">
-        <h3 className="text-xl font-bold">Pr�xima sess�o</h3>
+        <h3 className="text-xl font-bold">Próxima sessão</h3>
         {nextAppointment ? (
           <div className="rounded-xl border border-black/10 p-4 bg-white/70 flex items-center justify-between gap-4">
             <div>
@@ -482,19 +482,19 @@ export const PatientProfile = ({
               onClick={() => onNewSession(String(patientData.id))}
               className="bg-petroleum text-white px-4 py-2 rounded-xl font-semibold"
             >
-              Iniciar sess�o
+              Iniciar sessão
             </button>
           </div>
         ) : (
-          <p className="text-sm text-slate-500">Nenhuma sess�o futura encontrada.</p>
+          <p className="text-sm text-slate-500">Nenhuma sessão futura encontrada.</p>
         )}
       </div>
 
       {canAccessClinical && (
         <div className="glass-panel p-6 space-y-3">
-          <h3 className="text-xl font-bold">Resumo r�pido do prontu�rio</h3>
+          <h3 className="text-xl font-bold">Resumo rápido do prontuário</h3>
           <p className="text-sm text-slate-600 whitespace-pre-wrap">
-            {prontuarioText || "Nenhum texto complementar de prontu�rio registrado."}
+            {prontuarioText || "Nenhum texto complementar de prontuário registrado."}
           </p>
         </div>
       )}
@@ -537,7 +537,7 @@ export const PatientProfile = ({
         />
         <input
           className="apple-input"
-          placeholder="Endere�o"
+          placeholder="Endereço"
           value={patientForm.address}
           onChange={(e) => setPatientForm((prev) => ({ ...prev, address: e.target.value }))}
         />
@@ -557,7 +557,7 @@ export const PatientProfile = ({
       <h3 className="text-xl font-bold">Anamnese</h3>
       {!canAccessClinical ? (
         <div className="rounded-xl border border-warning/30 bg-warning/10 px-4 py-3 text-warning text-sm">
-          Perfil secretaria: anamnese indispon�vel por permiss�o.
+          Perfil secretaria: anamnese indisponível por permissão.
         </div>
       ) : (
         <>
@@ -566,7 +566,7 @@ export const PatientProfile = ({
             value={anamneseText}
             onChange={(e) => setAnamneseText(e.target.value)}
             className="apple-input w-full resize-none"
-            placeholder="Registre dados iniciais de anamnese, contexto cl�nico e hist�rico relevante."
+            placeholder="Registre dados iniciais de anamnese, contexto clínico e histórico relevante."
           />
           <button
             disabled={isSaving}
@@ -617,7 +617,7 @@ export const PatientProfile = ({
       </div>
 
       {filteredAppointments.length === 0 ? (
-        <div className="glass-panel p-10 text-center text-slate-500">Nenhuma sessao registrada para o periodo.</div>
+        <div className="glass-panel p-10 text-center text-slate-500">Nenhuma sessão registrada para o periodo.</div>
       ) : (
         filteredAppointments.map((appointment) => (
           <motion.div
@@ -637,7 +637,7 @@ export const PatientProfile = ({
                 })}
               </p>
               <p className="text-xs text-slate-500 mt-1">
-                {appointment.session_type === "couple" ? "Sessao de casal" : "Sessao individual"} | {" "}
+                {appointment.session_type === "couple" ? "Sessão de casal" : "Sessão individual"} | {" "}
                 {appointment.session_mode === "online" ? "Online" : "Presencial"}
               </p>
               {appointment.notes && <p className="text-sm text-slate-600 mt-2">{appointment.notes}</p>}
@@ -652,7 +652,7 @@ export const PatientProfile = ({
               {appointment.status === "scheduled"
                 ? "Agendada"
                 : appointment.status === "completed"
-                  ? "Concluida"
+                  ? "Concluída"
                   : appointment.status === "cancelled"
                     ? "Cancelada"
                     : "Remarcada"}
@@ -666,10 +666,10 @@ export const PatientProfile = ({
   const renderProntuario = () => (
     <div className="space-y-5">
       <div className="glass-panel p-6 space-y-4">
-        <h3 className="text-xl font-bold">Prontu�rio psicol�gico</h3>
+        <h3 className="text-xl font-bold">Prontuário psicológico</h3>
         {!canAccessClinical ? (
           <div className="rounded-xl border border-warning/30 bg-warning/10 px-4 py-3 text-warning text-sm">
-            Perfil secretaria: prontu�rio cl�nico indispon�vel por permiss�o.
+            Perfil secretaria: prontuário clínico indisponível por permissão.
           </div>
         ) : (
           <>
@@ -678,14 +678,14 @@ export const PatientProfile = ({
               value={prontuarioText}
               onChange={(e) => setProntuarioText(e.target.value)}
               className="apple-input w-full resize-none"
-              placeholder="Anota��es gerais e evolu��o cl�nica do paciente."
+              placeholder="Anotações gerais e evolução clínica do paciente."
             />
             <button
               disabled={isSaving}
               onClick={handleSaveProntuario}
               className="bg-petroleum text-white px-6 py-3 rounded-xl font-semibold disabled:opacity-60"
             >
-              Salvar prontu�rio
+              Salvar prontuário
             </button>
           </>
         )}
@@ -693,12 +693,12 @@ export const PatientProfile = ({
 
       <div className="space-y-4">
         {history.notes.length === 0 ? (
-          <div className="glass-panel p-10 text-center text-slate-500">Nenhum registro de sess�o encontrado.</div>
+          <div className="glass-panel p-10 text-center text-slate-500">Nenhum registro de sessão encontrado.</div>
         ) : (
           history.notes.map((note) => (
             <div key={note.id} className="glass-card p-5 space-y-2">
               <div className="flex items-center justify-between">
-                <p className="text-sm font-bold text-slate-700">Sess�o #{note.id}</p>
+                <p className="text-sm font-bold text-slate-700">Sessão #{note.id}</p>
                 <p className="text-xs text-slate-500">
                   {new Date(note.created_at).toLocaleDateString("pt-BR", {
                     day: "2-digit",
@@ -708,8 +708,8 @@ export const PatientProfile = ({
                 </p>
               </div>
               <p className="text-sm text-slate-600"><strong>Queixa:</strong> {note.complaint || "-"}</p>
-              <p className="text-sm text-slate-600"><strong>Interven��o:</strong> {note.intervention || "-"}</p>
-              <p className="text-sm text-slate-600"><strong>Pr�ximo foco:</strong> {note.next_focus || "-"}</p>
+              <p className="text-sm text-slate-600"><strong>Intervenção:</strong> {note.intervention || "-"}</p>
+              <p className="text-sm text-slate-600"><strong>Próximo foco:</strong> {note.next_focus || "-"}</p>
             </div>
           ))
         )}
@@ -725,7 +725,7 @@ export const PatientProfile = ({
         history.financial.map((record) => (
           <div key={record.id} className="glass-card p-5 flex items-center justify-between">
             <div>
-              <p className="font-semibold text-slate-700">{record.description || "Lan�amento financeiro"}</p>
+              <p className="font-semibold text-slate-700">{record.description || "Lançamento financeiro"}</p>
               <p className="text-xs text-slate-500 mt-1">
                 {new Date(record.date).toLocaleDateString("pt-BR", {
                   day: "2-digit",
@@ -746,16 +746,16 @@ export const PatientProfile = ({
 
   const renderDocumentos = () => (
     <div className="glass-panel p-6 space-y-4">
-      <h3 className="text-xl font-bold">Documentos e exporta��es</h3>
+      <h3 className="text-xl font-bold">Documentos e exportações</h3>
       <p className="text-sm text-slate-500">
-        Exporte rapidamente o hist�rico para compartilhamento interno, auditoria e backup do atendimento.
+        Exporte rapidamente o histórico para compartilhamento interno, auditoria e backup do atendimento.
       </p>
       <div className="flex flex-wrap gap-3">
         <button
           onClick={exportPatientJson}
           className="bg-petroleum text-white px-5 py-2.5 rounded-xl font-semibold"
         >
-          Exportar hist�rico (JSON)
+          Exportar histórico (JSON)
         </button>
         <button
           onClick={exportPatientText}
@@ -769,10 +769,10 @@ export const PatientProfile = ({
 
   const renderPreferencias = () => (
     <div className="glass-panel p-6 space-y-5">
-      <h3 className="text-xl font-bold">Prefer�ncias de cobran�a</h3>
+      <h3 className="text-xl font-bold">Preferências de cobrança</h3>
       <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
         <div className="space-y-2">
-          <label className="text-xs font-bold uppercase tracking-wider text-slate-400">Valor por sess�o (R$)</label>
+          <label className="text-xs font-bold uppercase tracking-wider text-slate-400">Valor por sessão (R$)</label>
           <input
             type="number"
             min={0}
@@ -783,7 +783,7 @@ export const PatientProfile = ({
           />
         </div>
         <div className="space-y-2">
-          <label className="text-xs font-bold uppercase tracking-wider text-slate-400">Modo de cobran�a</label>
+          <label className="text-xs font-bold uppercase tracking-wider text-slate-400">Modo de cobrança</label>
           <select
             value={preferencesForm.billing_mode_override}
             onChange={(e) =>
@@ -797,8 +797,8 @@ export const PatientProfile = ({
             }
             className="apple-input w-full appearance-none"
           >
-            <option value="default">Padr�o da cl�nica</option>
-            <option value="session">Por sess�o</option>
+            <option value="default">Padrão da clínica</option>
+            <option value="session">Por sessão</option>
             <option value="monthly">Mensal consolidado</option>
           </select>
         </div>
@@ -808,14 +808,14 @@ export const PatientProfile = ({
         onClick={handleSavePreferencias}
         className="bg-petroleum text-white px-6 py-3 rounded-xl font-semibold disabled:opacity-60"
       >
-        Salvar prefer�ncias
+        Salvar preferências
       </button>
     </div>
   );
 
   const renderSection = () => {
     if (isLoading && activeSection !== "cadastro" && activeSection !== "preferencias") {
-      return <div className="glass-panel p-10 text-center text-slate-500">Carregando informa��es...</div>;
+      return <div className="glass-panel p-10 text-center text-slate-500">Carregando informações...</div>;
     }
 
     if (activeSection === "principal") return renderPrincipal();
@@ -833,8 +833,8 @@ export const PatientProfile = ({
       {feedback && (
         <div
           className={`px-4 py-3 rounded-xl border flex items-start gap-2 ${feedback.type === "success"
-              ? "bg-success/10 text-success border-success/20"
-              : "bg-error/10 text-error border-error/20"
+            ? "bg-success/10 text-success border-success/20"
+            : "bg-error/10 text-error border-error/20"
             }`}
         >
           {feedback.type === "success" ? <CheckCircle2 size={18} /> : <AlertCircle size={18} />}
@@ -856,14 +856,14 @@ export const PatientProfile = ({
             onClick={() => setActiveSection("sessoes")}
             className="border border-petroleum/30 text-petroleum px-4 py-2.5 rounded-xl font-semibold"
           >
-            Ver sess�es
+            Ver sessões
           </button>
           <button
             onClick={() => onNewSession(String(patientData.id))}
             className="bg-petroleum text-white px-5 py-2.5 rounded-xl font-semibold flex items-center gap-2"
           >
             <Plus size={18} />
-            Agendar sess�o
+            Agendar sessão
           </button>
         </div>
       </header>
@@ -907,10 +907,10 @@ export const PatientProfile = ({
 
           {canAccessClinical ? (
             <div className="glass-panel p-4 bg-petroleum text-white border-none">
-              <p className="text-xs uppercase tracking-wider text-white/70 font-bold mb-1">Acesso cl�nico</p>
+              <p className="text-xs uppercase tracking-wider text-white/70 font-bold mb-1">Acesso clínico</p>
               <p className="text-sm font-medium flex items-center gap-2">
                 <ShieldCheck size={14} />
-                Perfil habilitado para prontu�rio e anamnese
+                Perfil habilitado para prontuário e anamnese
               </p>
             </div>
           ) : (

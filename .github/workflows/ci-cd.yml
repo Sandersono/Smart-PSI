@@ -69,6 +69,8 @@ jobs:
             VITE_SUPABASE_ANON_KEY=${{ secrets.VITE_SUPABASE_ANON_KEY || 'your-anon-key' }}
             VITE_SENTRY_DSN=${{ secrets.VITE_SENTRY_DSN }}
             VITE_SUPERADMIN_DOMAINS=${{ secrets.VITE_SUPERADMIN_DOMAINS }}
+            VITE_APP_VERSION=${{ github.sha }}
+            VITE_APP_BUILD_TIME=${{ github.event.repository.updated_at }}
           push: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}

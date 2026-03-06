@@ -364,16 +364,16 @@ export default function App() {
         onViewChange={(nextView) =>
           setView(
             nextView as
-              | "dashboard"
-              | "record"
-              | "note"
-              | "settings"
-              | "help"
-              | "patients"
-              | "patient_profile"
-              | "agenda"
-              | "inbox"
-              | "financial"
+            | "dashboard"
+            | "record"
+            | "note"
+            | "settings"
+            | "help"
+            | "patients"
+            | "patient_profile"
+            | "agenda"
+            | "inbox"
+            | "financial"
           )
         }
         onSignOut={handleSignOut}
@@ -521,6 +521,16 @@ export default function App() {
             {view === "help" && <Help />}
           </motion.div>
         </AnimatePresence>
+
+        {/* Global Application Footer */}
+        <footer className="mt-12 pt-6 border-t border-black/5 flex flex-col items-center justify-center text-xs text-slate-400">
+          <p>
+            Smart PSI &copy; {new Date().getFullYear()} — Versão {import.meta.env.VITE_APP_VERSION || "1.0.0"}
+          </p>
+          <p className="mt-1 opacity-70">
+            Última atualização: {import.meta.env.VITE_APP_BUILD_TIME || "Não informada"}
+          </p>
+        </footer>
       </main>
     </div>
   );
