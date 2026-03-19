@@ -21,6 +21,10 @@ interface SidebarProps {
   userName: string;
   userEmail: string;
   role: "admin" | "professional" | "secretary";
+  activeClinicId?: string;
+  activeClinicName?: string | null;
+  clinicOptions?: Array<{ id: string; label: string }>;
+  onClinicChange?: (clinicId: string) => void;
 }
 
 export const Sidebar = ({
@@ -30,6 +34,10 @@ export const Sidebar = ({
   userName,
   userEmail,
   role,
+  activeClinicId,
+  activeClinicName,
+  clinicOptions = [],
+  onClinicChange,
 }: SidebarProps) => {
   const clinicalItems = [
     { id: "dashboard", label: "Painel", icon: LayoutDashboard },
@@ -67,6 +75,27 @@ export const Sidebar = ({
       </nav>
 
       <div className="pt-6 border-t border-white/20 space-y-4">
+        <div className="px-2 space-y-2">
+          <p className="text-[11px] uppercase tracking-[0.18em] text-slate-400">Clinica ativa</p>
+          {clinicOptions.length > 1 && onClinicChange ? (
+            <select
+              value={activeClinicId || ""}
+              onChange={(event) => onClinicChange(event.target.value)}
+              className="w-full rounded-xl border border-white/10 bg-white/5 px-3 py-2 text-sm text-slate-100 outline-none transition focus:border-white/20 focus:bg-white/10"
+            >
+              {clinicOptions.map((clinic) => (
+                <option key={clinic.id} value={clinic.id} className="bg-slate-900 text-slate-100">
+                  {clinic.label}
+                </option>
+              ))}
+            </select>
+          ) : (
+            <div className="rounded-xl border border-white/10 bg-white/5 px-3 py-2 text-sm text-slate-200">
+              {activeClinicName || "Clinica principal"}
+            </div>
+          )}
+        </div>
+
         <div className="flex items-center gap-3 px-2">
           <div className="w-10 h-10 bg-slate-700 rounded-full flex items-center justify-center text-slate-100 border border-slate-500">
             <User size={20} />

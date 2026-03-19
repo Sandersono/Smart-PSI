@@ -243,6 +243,31 @@ type TenantAccessState = {
   reason: string | null;
 };
 
+type ActiveClinicMembership = {
+  clinic_id: string;
+  role: UserRole;
+  active: boolean;
+  created_at: string | null;
+};
+
+type SessionContextMembership = {
+  clinic_id: string;
+  clinic_name: string | null;
+  clinic_slug: string | null;
+  role: UserRole;
+  active: boolean;
+  subscription_status: TenantStatus | null;
+  access_blocked: boolean;
+  access_reason: string | null;
+};
+
+type SessionContextResponse = {
+  user_id: string;
+  platform_role: "superadmin" | null;
+  active_membership: SessionContextMembership;
+  memberships: SessionContextMembership[];
+};
+
 async function resolveClinicAccessState(clinicId: string): Promise<TenantAccessState> {
   try {
     const { data, error } = await supabase
@@ -316,7 +341,7 @@ async function assertClinicAccessAllowed(clinicId: string) {
   throw new HttpError(403, state.reason || "Acesso bloqueado.");
 }
 
-async function ensureClinicMembership(userId: string, preferredClinicId?: string | null) {
+async function listActiveClinicMemberships(userId: string): Promise<ActiveClinicMembership[]> {
   const { data: memberships, error: membershipsError } = await supabase
     .from("clinic_members")
     .select("id, clinic_id, role, active, created_at")
@@ -335,7 +360,16 @@ async function ensureClinicMembership(userId: string, preferredClinicId?: string
     throw membershipsError;
   }
 
-  const activeMemberships = memberships ?? [];
+  return (memberships || []).map((item) => ({
+    clinic_id: String(item.clinic_id),
+    role: parseRole(item.role) || "professional",
+    active: item.active !== false,
+    created_at: toNullableString(item.created_at),
+  }));
+}
+
+async function ensureClinicMembership(userId: string, preferredClinicId?: string | null) {
+  const activeMemberships = await listActiveClinicMemberships(userId);
   if (activeMemberships.length === 0) {
     const { data: clinicData, error: clinicError } = await supabase
       .from("clinics")
@@ -378,7 +412,7 @@ async function ensureClinicMembership(userId: string, preferredClinicId?: string
     if (selected) {
       return {
         clinicId: String(selected.clinic_id),
-        role: parseRole(selected.role) || "professional",
+        role: selected.role,
       };
     }
   }
@@ -386,7 +420,86 @@ async function ensureClinicMembership(userId: string, preferredClinicId?: string
   const first = activeMemberships[0];
   return {
     clinicId: String(first.clinic_id),
-    role: parseRole(first.role) || "professional",
+    role: first.role,
+  };
+}
+
+async function buildSessionContext(context: UserContext): Promise<SessionContextResponse> {
+  const activeMemberships = await listActiveClinicMemberships(context.userId);
+  const clinicIds = Array.from(new Set(activeMemberships.map((item) => item.clinic_id)));
+
+  const clinicMap = new Map<string, { name: string | null; slug: string | null }>();
+  if (clinicIds.length > 0) {
+    const { data: clinics, error } = await supabase
+      .from("clinics")
+      .select("id, name, slug")
+      .in("id", clinicIds);
+
+    if (error) throw error;
+
+    for (const clinic of clinics || []) {
+      clinicMap.set(String(clinic.id), {
+        name: toNullableString(clinic.name),
+        slug: toNullableString(clinic.slug),
+      });
+    }
+  }
+
+  const membershipEntries = await Promise.all(
+    activeMemberships.map(async (membership) => {
+      const access = await resolveClinicAccessState(membership.clinic_id);
+      const clinic = clinicMap.get(membership.clinic_id);
+      const item: SessionContextMembership = {
+        clinic_id: membership.clinic_id,
+        clinic_name: clinic?.name || null,
+        clinic_slug: clinic?.slug || null,
+        role: membership.role,
+        active: membership.active,
+        subscription_status: access.status,
+        access_blocked: access.blocked,
+        access_reason: access.reason,
+      };
+      return item;
+    })
+  );
+
+  let platformRole: "superadmin" | null = null;
+  try {
+    const { data, error } = await supabase
+      .from("platform_superadmins")
+      .select("user_id, active")
+      .eq("user_id", context.userId)
+      .maybeSingle();
+
+    if (error) throw error;
+
+    if (data && data.active !== false) {
+      platformRole = "superadmin";
+    }
+  } catch (error) {
+    if (!isMissingRelationError(error)) {
+      throw error;
+    }
+  }
+
+  const activeMembership =
+    membershipEntries.find((item) => item.clinic_id === context.clinicId) ||
+    membershipEntries[0] || {
+      clinic_id: context.clinicId,
+      clinic_name: null,
+      clinic_slug: null,
+      role: context.role,
+      active: true,
+      subscription_status: null,
+      access_blocked: false,
+      access_reason: null,
+    };
+
+  return {
+    user_id: context.userId,
+    platform_role: platformRole,
+    active_membership: activeMembership,
+    memberships: membershipEntries,
   };
 }
 
@@ -3352,6 +3465,18 @@ export async function createApp(options: CreateAppOptions = {}) {
   app.use("/api", userRoutes);
   app.use("/api/integrations", integrationRoutes);
 
+  app.get("/api/session/context", async (req, res) => {
+    const context = await requireUserContext(req, res);
+    if (!context) return;
+
+    try {
+      const sessionContext = await buildSessionContext(context);
+      res.json(sessionContext);
+    } catch (error) {
+      handleRouteError(res, error, "GET /api/session/context");
+    }
+  });
+
   app.get("/api/superadmin/me", sensitiveLimiter, async (req, res) => {
     const context = await requireSuperadminContext(req, res);
     if (!context) return;
@@ -5867,9 +5992,8 @@ export async function createApp(options: CreateAppOptions = {}) {
     const context = await requireUserContext(req, res, ["admin", "professional"]);
     if (!context) return;
 
-    // @ts-ignore - avoid typescript complaining if ai is not strictly typed globally
-    if (typeof ai === "undefined" || !ai) {
-      return res.status(503).json({ error: "Serviço de IA indisponivel no servidor." });
+    if (!gemini) {
+      return res.status(503).json({ error: "Servico de IA indisponivel no servidor." });
     }
 
     const { text, type } = req.body;
@@ -5877,11 +6001,10 @@ export async function createApp(options: CreateAppOptions = {}) {
 
     try {
       const prompt = type === "grammar"
-        ? `Você é um assistente clínico. Corrija ortografia, gramática e deixe este texto um pouco mais profissional, sem alterar fatos e devolvendo apenas o texto corrigido, sem introduções:\n\n${text}`
-        : `Você é um assistente clínico auxiliando na escrita de um prontuário. Extraia e resuma o texto abaixo, de forma bem profissional, focando em: 1) Queixa, 2) Intervenção Realizada, 3) Próximo foco. Devolva apenas os três pontos diretos.\n\n${text}`;
+        ? `Voce e um assistente clinico. Corrija ortografia, gramatica e deixe este texto um pouco mais profissional, sem alterar fatos e devolvendo apenas o texto corrigido, sem introducoes:\n\n${text}`
+        : `Voce e um assistente clinico auxiliando na escrita de um prontuario. Extraia e resuma o texto abaixo, de forma profissional, focando em: 1) Queixa, 2) Intervencao realizada, 3) Proximo foco. Devolva apenas os tres pontos diretos.\n\n${text}`;
 
-      // @ts-ignore
-      const response = await ai.models.generateContent({
+      const response = await gemini.models.generateContent({
         model: aiModelName || "gemini-2.5-flash",
         contents: prompt
       });
@@ -7546,5 +7669,3 @@ if (isDirectRun) {
     process.exit(1);
   });
 }
-
-

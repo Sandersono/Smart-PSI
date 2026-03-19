@@ -10,6 +10,22 @@ export class ApiError extends Error {
 }
 
 export const AUTH_EXPIRED_EVENT = "smartpsi:auth-expired";
+export const ACTIVE_CLINIC_STORAGE_KEY = "smartpsi:active-clinic-id";
+
+export function getStoredActiveClinicId(): string | null {
+  if (typeof window === "undefined") return null;
+  const clinicId = window.localStorage.getItem(ACTIVE_CLINIC_STORAGE_KEY);
+  return clinicId && clinicId.trim() ? clinicId.trim() : null;
+}
+
+export function setStoredActiveClinicId(clinicId: string | null) {
+  if (typeof window === "undefined") return;
+  if (clinicId && clinicId.trim()) {
+    window.localStorage.setItem(ACTIVE_CLINIC_STORAGE_KEY, clinicId.trim());
+    return;
+  }
+  window.localStorage.removeItem(ACTIVE_CLINIC_STORAGE_KEY);
+}
 
 export async function apiRequest<T>(
   path: string,
@@ -24,6 +40,12 @@ export async function apiRequest<T>(
 
   if (init.body && !headers.has("Content-Type")) {
     headers.set("Content-Type", "application/json");
+  }
+
+  const activeClinicId = getStoredActiveClinicId();
+  const isSuperadminPath = path.startsWith("/api/superadmin");
+  if (activeClinicId && !isSuperadminPath && !headers.has("x-clinic-id")) {
+    headers.set("x-clinic-id", activeClinicId);
   }
 
   const response = await fetch(path, {

@@ -15,7 +15,7 @@ import {
 } from "lucide-react";
 import { cn } from "../lib/utils";
 import { ApiError, apiRequest } from "../lib/api";
-import { ClinicMember, Patient, UserRole } from "../lib/types";
+import { ClinicMember, Patient, SessionContext, UserRole } from "../lib/types";
 import { Switch } from "./Switch";
 
 interface AgendaProps {
@@ -63,11 +63,6 @@ type Provider = {
   active: boolean;
   full_name?: string | null;
   email?: string | null;
-};
-
-type MeContext = {
-  user_id: string;
-  role: UserRole;
 };
 
 type AppointmentForm = {
@@ -169,7 +164,7 @@ export const Agenda = ({ accessToken, onStartSession }: AgendaProps) => {
   const [blocks, setBlocks] = useState<CalendarBlock[]>([]);
   const [patients, setPatients] = useState<Patient[]>([]);
   const [providers, setProviders] = useState<Provider[]>([]);
-  const [me, setMe] = useState<MeContext | null>(null);
+  const [me, setMe] = useState<SessionContext | null>(null);
   const [isModalOpen, setIsModalOpen] = useState(false);
 
   type AppointmentFormState = Omit<Appointment, "id" | "created_at" | "updated_at" | "series_sequence" | "is_exception" | "session_mode" | "patient_id" | "secondary_patient_id"> & {
@@ -271,7 +266,7 @@ export const Agenda = ({ accessToken, onStartSession }: AgendaProps) => {
 
   const fetchMe = async () => {
     try {
-      const data = await apiRequest<MeContext>("/api/me", accessToken);
+      const data = await apiRequest<SessionContext>("/api/session/context", accessToken);
       setMe(data);
     } catch (error) {
       console.error("Failed to load me context", error);
@@ -328,7 +323,8 @@ export const Agenda = ({ accessToken, onStartSession }: AgendaProps) => {
 
   const resolveDefaultProviderId = () => {
     if (providerFilter !== "all") return providerFilter;
-    if (me?.role === "admin" || me?.role === "professional") {
+    const activeRole = me?.active_membership.role;
+    if (activeRole === "admin" || activeRole === "professional") {
       const own = providers.find((provider) => provider.user_id === me.user_id);
       if (own) return own.user_id;
       if (me.user_id) return me.user_id;
@@ -628,7 +624,8 @@ export const Agenda = ({ accessToken, onStartSession }: AgendaProps) => {
       .replace(/^\w/, (c) => c.toUpperCase());
   }, [selectedDate, viewMode]);
 
-  const canManageBlocks = me?.role === "admin" || me?.role === "professional";
+  const canManageBlocks =
+    me?.active_membership.role === "admin" || me?.active_membership.role === "professional";
 
   return (
     <div className="space-y-8">

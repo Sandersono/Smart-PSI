@@ -19,17 +19,17 @@ import { Settings } from "./components/Settings";
 import { Help } from "./components/Help";
 import { Auth } from "./components/Auth";
 import { Toast } from "./components/Toast";
-import { AUTH_EXPIRED_EVENT, ApiError, apiRequest } from "./lib/api";
+import {
+  AUTH_EXPIRED_EVENT,
+  ApiError,
+  apiRequest,
+  setStoredActiveClinicId,
+} from "./lib/api";
 import { supabase } from "./lib/supabaseClient";
 import { Note } from "./lib/utils";
-import { Patient, UserRole } from "./lib/types";
+import { Patient, SessionContext, UserRole } from "./lib/types";
 
 type NoteSource = "audio" | "quick" | "manual";
-type MeResponse = {
-  user_id: string;
-  clinic_id: string;
-  role: UserRole;
-};
 
 export default function App() {
   const [view, setView] = useState<
@@ -49,9 +49,9 @@ export default function App() {
   const [notes, setNotes] = useState<Note[]>([]);
   const [currentNote, setCurrentNote] = useState<Partial<Note> | null>(null);
   const [selectedPatient, setSelectedPatient] = useState<Patient | null>(null);
-  const [me, setMe] = useState<MeResponse | null>(null);
-  const [meError, setMeError] = useState<string | null>(null);
-  const [loadingMe, setLoadingMe] = useState(false);
+  const [sessionContext, setSessionContext] = useState<SessionContext | null>(null);
+  const [sessionContextError, setSessionContextError] = useState<string | null>(null);
+  const [loadingSessionContext, setLoadingSessionContext] = useState(false);
   const [isSavingNote, setIsSavingNote] = useState(false);
   const [isDeletingNote, setIsDeletingNote] = useState(false);
   const [toast, setToast] = useState<{ type: "success" | "error" | "info"; message: string } | null>(null);
@@ -61,7 +61,8 @@ export default function App() {
   });
   const authExpireInFlightRef = useRef(false);
   const accessToken = session?.access_token || "";
-  const userRole: UserRole = me?.role || "professional";
+  const activeMembership = sessionContext?.active_membership || null;
+  const userRole: UserRole = activeMembership?.role || "professional";
   const userName = session?.user.user_metadata?.full_name || "Profissional";
   const userEmail = session?.user.email || "";
 
@@ -89,11 +90,11 @@ export default function App() {
 
   useEffect(() => {
     if (!session) {
-      setMe(null);
+      setSessionContext(null);
       setNotes([]);
       return;
     }
-    fetchMe();
+    fetchSessionContext();
   }, [session?.access_token]);
 
   useEffect(() => {
@@ -127,10 +128,11 @@ export default function App() {
         });
         await supabase.auth.signOut();
         setSession(null);
-        setMe(null);
+        setSessionContext(null);
         setCurrentNote(null);
         setSelectedPatient(null);
         setNotes([]);
+        setStoredActiveClinicId(null);
       } finally {
         authExpireInFlightRef.current = false;
       }
@@ -143,11 +145,11 @@ export default function App() {
   }, []);
 
   useEffect(() => {
-    if (me?.role !== "secretary") return;
+    if (activeMembership?.role !== "secretary") return;
     if (view === "dashboard" || view === "record" || view === "note") {
       setView("agenda");
     }
-  }, [me?.role, view]);
+  }, [activeMembership?.role, view]);
 
   const notify = (type: "success" | "error" | "info", message: string) => {
     setToast({ type, message });
@@ -157,27 +159,28 @@ export default function App() {
     const { data } = await supabase.auth.getSession();
     setSession(data.session);
     if (data.session?.access_token) {
-      await fetchMe();
+      await fetchSessionContext();
     }
   };
 
-  const fetchMe = async () => {
+  const fetchSessionContext = async () => {
     if (!session?.access_token) return;
-    setLoadingMe(true);
-    setMeError(null);
+    setLoadingSessionContext(true);
+    setSessionContextError(null);
     try {
-      const data = await apiRequest<MeResponse>("/api/me", session.access_token);
-      setMe(data);
+      const data = await apiRequest<SessionContext>("/api/session/context", session.access_token);
+      setSessionContext(data);
+      setStoredActiveClinicId(data.active_membership.clinic_id);
     } catch (error) {
       console.error("Failed to load user context", error);
       if (error instanceof ApiError) {
-        setMeError(error.message || "Falha ao carregar contexto da clinica.");
+        setSessionContextError(error.message || "Falha ao carregar contexto da clinica.");
       } else {
-        setMeError("Falha ao carregar contexto da clinica.");
+        setSessionContextError("Falha ao carregar contexto da clinica.");
       }
-      setMe(null);
+      setSessionContext(null);
     } finally {
-      setLoadingMe(false);
+      setLoadingSessionContext(false);
     }
   };
 
@@ -292,10 +295,17 @@ export default function App() {
   };
 
   const handleSignOut = async () => {
+    setStoredActiveClinicId(null);
     await supabase.auth.signOut();
     setView("dashboard");
     setCurrentNote(null);
     setSelectedPatient(null);
+  };
+
+  const handleClinicChange = (clinicId: string) => {
+    if (!clinicId || clinicId === activeMembership?.clinic_id) return;
+    setStoredActiveClinicId(clinicId);
+    window.location.reload();
   };
 
   if (!authReady) {
@@ -320,7 +330,7 @@ export default function App() {
     );
   }
 
-  if (loadingMe && !me) {
+  if (loadingSessionContext && !sessionContext) {
     return (
       <div className="min-h-screen bg-[#F7F8FA] flex items-center justify-center text-slate-500">
         Carregando contexto da clinica...
@@ -328,15 +338,15 @@ export default function App() {
     );
   }
 
-  if (meError && !me) {
-    const schemaError = meError.toLowerCase().includes("schema");
+  if (sessionContextError && !sessionContext) {
+    const schemaError = sessionContextError.toLowerCase().includes("schema");
     return (
       <div className="min-h-screen bg-[#F7F8FA] flex items-center justify-center p-6">
         <div className="glass-panel max-w-2xl p-8 space-y-4">
           <h2 className="text-2xl font-bold text-petroleum">
             {schemaError ? "Configuracao pendente do banco" : "Acesso indisponivel"}
           </h2>
-          <p className="text-slate-600">{meError}</p>
+          <p className="text-slate-600">{sessionContextError}</p>
           {schemaError && (
             <p className="text-sm text-slate-500">
               Execute no Supabase SQL Editor: `supabase/migrations/20260221_002_clinic_rbac_agenda_asaas.sql`,
@@ -380,6 +390,13 @@ export default function App() {
         userName={userName}
         userEmail={userEmail}
         role={userRole}
+        activeClinicId={activeMembership?.clinic_id}
+        activeClinicName={activeMembership?.clinic_name}
+        clinicOptions={(sessionContext?.memberships || []).map((membership) => ({
+          id: membership.clinic_id,
+          label: membership.clinic_name || membership.clinic_slug || membership.clinic_id,
+        }))}
+        onClinicChange={handleClinicChange}
       />
 
       <main className="flex-1 p-8 lg:p-12 overflow-y-auto">

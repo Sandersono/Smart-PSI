@@ -1,4 +1,5 @@
 export type UserRole = "admin" | "professional" | "secretary";
+export type TenantStatus = "trialing" | "active" | "past_due" | "suspended" | "cancelled";
 
 export type BillingMode = "session" | "monthly";
 
@@ -31,6 +32,24 @@ export interface ClinicMember {
   created_at: string;
   email?: string | null;
   full_name?: string | null;
+}
+
+export interface SessionMembership {
+  clinic_id: string;
+  clinic_name: string | null;
+  clinic_slug: string | null;
+  role: UserRole;
+  active: boolean;
+  subscription_status: TenantStatus | null;
+  access_blocked: boolean;
+  access_reason: string | null;
+}
+
+export interface SessionContext {
+  user_id: string;
+  platform_role: "superadmin" | null;
+  active_membership: SessionMembership;
+  memberships: SessionMembership[];
 }
 
 export interface Appointment {

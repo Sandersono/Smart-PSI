@@ -444,6 +444,99 @@ describe("backend hardening", () => {
   });
 });
 
+describe("/api/me contract", () => {
+  it("returns canonical user context fields for frontend consumers", async () => {
+    const { app } = await createTestApp({
+      env: {
+        NODE_ENV: "development",
+        ALLOW_DEV_USER_BYPASS: "true",
+      },
+      seed: {
+        clinic_members: [
+          {
+            id: 1,
+            clinic_id: "clinic-ctx",
+            user_id: "ctx-user",
+            role: "professional",
+            active: true,
+            created_at: "2026-02-01T00:00:00.000Z",
+          },
+        ],
+      },
+    });
+
+    const response = await request(app).get("/api/me").set("x-user-id", "ctx-user");
+    expect(response.status).toBe(200);
+    expect(response.body?.user_id).toBe("ctx-user");
+    expect(response.body?.clinic_id).toBe("clinic-ctx");
+    expect(response.body?.role).toBe("professional");
+    expect(response.body).toHaveProperty("profile");
+  });
+});
+
+describe("integrations test endpoint", () => {
+  it("returns not_configured statuses when providers are missing backend config", async () => {
+    const { app } = await createTestApp({
+      env: {
+        NODE_ENV: "development",
+        ALLOW_DEV_USER_BYPASS: "true",
+        FEATURE_GOOGLE_ENABLED: "true",
+        FEATURE_ASAAS_ENABLED: "true",
+        ASAAS_API_KEY: undefined,
+        GOOGLE_CLIENT_ID: undefined,
+        GOOGLE_CLIENT_SECRET: undefined,
+        GOOGLE_REDIRECT_URI: undefined,
+      },
+      seed: {
+        clinic_members: [
+          {
+            id: 1,
+            clinic_id: "clinic-int",
+            user_id: "int-user",
+            role: "professional",
+            active: true,
+            created_at: "2026-02-01T00:00:00.000Z",
+          },
+        ],
+      },
+    });
+
+    const response = await request(app).get("/api/integrations/test").set("x-user-id", "int-user");
+    expect(response.status).toBe(200);
+    expect(response.body?.asaas?.status).toBe("not_configured");
+    expect(response.body?.google?.status).toBe("not_configured");
+    expect(typeof response.body?.tested_at).toBe("string");
+  });
+
+  it("returns disabled statuses when integration flags are disabled", async () => {
+    const { app } = await createTestApp({
+      env: {
+        NODE_ENV: "development",
+        ALLOW_DEV_USER_BYPASS: "true",
+        FEATURE_GOOGLE_ENABLED: "false",
+        FEATURE_ASAAS_ENABLED: "false",
+      },
+      seed: {
+        clinic_members: [
+          {
+            id: 1,
+            clinic_id: "clinic-int",
+            user_id: "int-user",
+            role: "professional",
+            active: true,
+            created_at: "2026-02-01T00:00:00.000Z",
+          },
+        ],
+      },
+    });
+
+    const response = await request(app).get("/api/integrations/test").set("x-user-id", "int-user");
+    expect(response.status).toBe(200);
+    expect(response.body?.asaas?.status).toBe("disabled");
+    expect(response.body?.google?.status).toBe("disabled");
+  });
+});
+
 describe("webhook token validation when configured", () => {
   let app: Awaited<ReturnType<(typeof import("../../server"))["createApp"]>>;
 
@@ -853,7 +946,7 @@ describe("tenant subscription access lock", () => {
 
     const response = await request(app).get("/api/me").set("x-user-id", "pro-user");
     expect(response.status).toBe(403);
-    expect(String(response.body?.error || "")).toContain("Subscription suspended");
+    expect(String(response.body?.error || "")).toContain("inadimplencia");
   });
 
   it("allows clinic access on past_due while grace period is valid", async () => {
@@ -1889,5 +1982,167 @@ describe("AI usage summary endpoint", () => {
       .query({ month: "2026-04" });
 
     expect(response.status).toBe(403);
+  });
+});
+
+describe("/api/check-first-time-setup", () => {
+  it("redirects to onboarding when the user has no active clinic membership", async () => {
+    const { app } = await createTestApp({
+      env: {
+        NODE_ENV: "production",
+        ALLOW_DEV_USER_BYPASS: "false",
+      },
+      seed: {
+        auth_users: [
+          {
+            id: "token-user",
+            email: "token-user@example.com",
+            user_metadata: { full_name: "Token User" },
+          },
+        ],
+      },
+    });
+
+    const response = await request(app)
+      .get("/api/check-first-time-setup")
+      .set("Authorization", "Bearer valid-token");
+
+    expect(response.status).toBe(200);
+    expect(response.body).toMatchObject({
+      redirect: "/onboarding",
+      reason: "no_membership",
+    });
+  });
+
+  it("reports setup complete when the user already has an active clinic membership", async () => {
+    const { app } = await createTestApp({
+      env: {
+        NODE_ENV: "production",
+        ALLOW_DEV_USER_BYPASS: "false",
+      },
+      seed: {
+        auth_users: [
+          {
+            id: "token-user",
+            email: "token-user@example.com",
+            user_metadata: { full_name: "Token User" },
+          },
+        ],
+        clinic_members: [
+          {
+            id: 1,
+            clinic_id: "clinic-setup",
+            user_id: "token-user",
+            role: "admin",
+            active: true,
+            created_at: "2026-03-05T10:00:00.000Z",
+          },
+        ],
+        clinics: [{ id: "clinic-setup", name: "Clinica Setup" }],
+      },
+    });
+
+    const response = await request(app)
+      .get("/api/check-first-time-setup")
+      .set("Authorization", "Bearer valid-token");
+
+    expect(response.status).toBe(200);
+    expect(response.body).toMatchObject({
+      redirect: "/dashboard",
+      reason: "setup_complete",
+    });
+  });
+});
+
+describe("session context endpoint", () => {
+  let app: Awaited<ReturnType<(typeof import("../../server"))["createApp"]>>;
+
+  beforeAll(async () => {
+    const created = await createTestApp({
+      env: {
+        ALLOW_DEV_USER_BYPASS: "false",
+      },
+      seed: {
+        auth_users: [
+          {
+            id: "token-user",
+            email: "token-user@example.com",
+            user_metadata: { full_name: "Token User" },
+          },
+        ],
+        clinics: [
+          { id: "clinic-a", name: "Clinica Aurora", slug: "aurora" },
+          { id: "clinic-b", name: "Clinica Boreal", slug: "boreal" },
+        ],
+        clinic_members: [
+          {
+            id: 1,
+            clinic_id: "clinic-a",
+            user_id: "token-user",
+            role: "admin",
+            active: true,
+            created_at: "2026-03-01T10:00:00.000Z",
+          },
+          {
+            id: 2,
+            clinic_id: "clinic-b",
+            user_id: "token-user",
+            role: "professional",
+            active: true,
+            created_at: "2026-03-02T10:00:00.000Z",
+          },
+        ],
+        tenant_subscriptions: [
+          {
+            clinic_id: "clinic-a",
+            status: "active",
+            payment_grace_until: null,
+            suspended_reason: null,
+          },
+          {
+            clinic_id: "clinic-b",
+            status: "trialing",
+            payment_grace_until: null,
+            suspended_reason: null,
+          },
+        ],
+        platform_superadmins: [{ user_id: "token-user", active: true }],
+      },
+    });
+    app = created.app;
+  });
+
+  it("returns canonical membership context for the authenticated user", async () => {
+    const response = await request(app)
+      .get("/api/session/context")
+      .set("Authorization", "Bearer valid-token");
+
+    expect(response.status).toBe(200);
+    expect(response.body?.user_id).toBe("token-user");
+    expect(response.body?.platform_role).toBe("superadmin");
+    expect(response.body?.active_membership).toMatchObject({
+      clinic_id: "clinic-a",
+      clinic_name: "Clinica Aurora",
+      role: "admin",
+      subscription_status: "active",
+      access_blocked: false,
+    });
+    expect(response.body?.memberships).toHaveLength(2);
+  });
+
+  it("respects x-clinic-id when choosing the active clinic", async () => {
+    const response = await request(app)
+      .get("/api/session/context")
+      .set("Authorization", "Bearer valid-token")
+      .set("x-clinic-id", "clinic-b");
+
+    expect(response.status).toBe(200);
+    expect(response.body?.active_membership).toMatchObject({
+      clinic_id: "clinic-b",
+      clinic_name: "Clinica Boreal",
+      role: "professional",
+      subscription_status: "trialing",
+      access_blocked: false,
+    });
   });
 });
