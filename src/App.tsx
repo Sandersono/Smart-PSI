@@ -3,20 +3,15 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import React, { useEffect, useRef, useState } from "react";
-import { Session } from "@supabase/supabase-js";
+import React, { useEffect, useState } from "react";
 import { Auth } from "./components/Auth";
 import { ClinicWorkspaceContent } from "./components/app/ClinicWorkspaceContent";
 import { ClinicWorkspaceShell } from "./components/app/ClinicWorkspaceShell";
-import {
-  AUTH_EXPIRED_EVENT,
-  ApiError,
-  apiRequest,
-  setStoredActiveClinicId,
-} from "./lib/api";
-import { supabase } from "./lib/supabaseClient";
+import { apiRequest, setStoredActiveClinicId } from "./lib/api";
+import { useClinicAuthSession } from "./hooks/useClinicAuthSession";
+import { useClinicSessionContext } from "./hooks/useClinicSessionContext";
 import { Note } from "./lib/utils";
-import { Patient, SessionContext, UserRole } from "./lib/types";
+import { Patient, UserRole } from "./lib/types";
 import {
   ClinicWorkspaceView,
   buildClinicWorkspacePath,
@@ -31,61 +26,44 @@ export default function App() {
     if (typeof window === "undefined") return "dashboard";
     return parseClinicWorkspaceView(window.location.pathname, "dashboard");
   });
-  const [session, setSession] = useState<Session | null>(null);
-  const [authReady, setAuthReady] = useState(false);
   const [notes, setNotes] = useState<Note[]>([]);
   const [currentNote, setCurrentNote] = useState<Partial<Note> | null>(null);
   const [selectedPatient, setSelectedPatient] = useState<Patient | null>(null);
-  const [sessionContext, setSessionContext] = useState<SessionContext | null>(null);
-  const [sessionContextError, setSessionContextError] = useState<string | null>(null);
-  const [loadingSessionContext, setLoadingSessionContext] = useState(false);
   const [isSavingNote, setIsSavingNote] = useState(false);
   const [isDeletingNote, setIsDeletingNote] = useState(false);
   const [toast, setToast] = useState<{ type: "success" | "error" | "info"; message: string } | null>(
     null
   );
-  const [forcePasswordReset, setForcePasswordReset] = useState<boolean>(() => {
-    if (typeof window === "undefined") return false;
-    return window.location.hash.includes("type=recovery");
-  });
-  const authExpireInFlightRef = useRef(false);
 
+  const notify = (type: "success" | "error" | "info", message: string) => {
+    setToast({ type, message });
+  };
+
+  const resetWorkspaceState = () => {
+    setView("dashboard");
+    setCurrentNote(null);
+    setSelectedPatient(null);
+    setNotes([]);
+  };
+
+  const {
+    session,
+    authReady,
+    forcePasswordReset,
+    clearPasswordRecovery,
+    refreshSession: refreshAuthSession,
+    signOut,
+  } = useClinicAuthSession({
+    notify,
+    onSessionInvalidated: resetWorkspaceState,
+  });
+  const { sessionContext, sessionContextError, loadingSessionContext, refreshSessionContext } =
+    useClinicSessionContext(session);
   const accessToken = session?.access_token || "";
   const activeMembership = sessionContext?.active_membership || null;
   const userRole: UserRole = activeMembership?.role || "professional";
   const userName = session?.user.user_metadata?.full_name || "Profissional";
   const userEmail = session?.user.email || "";
-
-  useEffect(() => {
-    let mounted = true;
-
-    void supabase.auth.getSession().then(({ data }) => {
-      if (!mounted) return;
-      setSession(data.session);
-      setAuthReady(true);
-    });
-
-    const {
-      data: { subscription },
-    } = supabase.auth.onAuthStateChange((_event, nextSession) => {
-      setSession(nextSession);
-      setAuthReady(true);
-    });
-
-    return () => {
-      mounted = false;
-      subscription.unsubscribe();
-    };
-  }, []);
-
-  useEffect(() => {
-    if (!session) {
-      setSessionContext(null);
-      setNotes([]);
-      return;
-    }
-    void fetchSessionContext();
-  }, [session?.access_token]);
 
   useEffect(() => {
     if (!session) {
@@ -108,33 +86,6 @@ export default function App() {
   }, [toast]);
 
   useEffect(() => {
-    const onAuthExpired = async () => {
-      if (authExpireInFlightRef.current) return;
-      authExpireInFlightRef.current = true;
-      try {
-        setToast({
-          type: "error",
-          message: "Sessao expirada. Faca login novamente.",
-        });
-        await supabase.auth.signOut();
-        setSession(null);
-        setSessionContext(null);
-        setCurrentNote(null);
-        setSelectedPatient(null);
-        setNotes([]);
-        setStoredActiveClinicId(null);
-      } finally {
-        authExpireInFlightRef.current = false;
-      }
-    };
-
-    window.addEventListener(AUTH_EXPIRED_EVENT, onAuthExpired as EventListener);
-    return () => {
-      window.removeEventListener(AUTH_EXPIRED_EVENT, onAuthExpired as EventListener);
-    };
-  }, []);
-
-  useEffect(() => {
     if (activeMembership?.role !== "secretary") return;
     if (view === "dashboard" || view === "record" || view === "note") {
       setView("agenda");
@@ -145,37 +96,9 @@ export default function App() {
     syncBrowserPath(buildClinicWorkspacePath(view), "replace");
   }, [view]);
 
-  const notify = (type: "success" | "error" | "info", message: string) => {
-    setToast({ type, message });
-  };
-
-  const refreshSession = async () => {
-    const { data } = await supabase.auth.getSession();
-    setSession(data.session);
-    if (data.session?.access_token) {
-      await fetchSessionContext();
-    }
-  };
-
-  const fetchSessionContext = async () => {
-    if (!session?.access_token) return;
-    setLoadingSessionContext(true);
-    setSessionContextError(null);
-    try {
-      const data = await apiRequest<SessionContext>("/api/session/context", session.access_token);
-      setSessionContext(data);
-      setStoredActiveClinicId(data.active_membership.clinic_id);
-    } catch (error) {
-      console.error("Failed to load user context", error);
-      if (error instanceof ApiError) {
-        setSessionContextError(error.message || "Falha ao carregar contexto da clinica.");
-      } else {
-        setSessionContextError("Falha ao carregar contexto da clinica.");
-      }
-      setSessionContext(null);
-    } finally {
-      setLoadingSessionContext(false);
-    }
+  const refreshWorkspaceSession = async () => {
+    const nextSession = await refreshAuthSession();
+    await refreshSessionContext(nextSession?.access_token);
   };
 
   const hasRequiredFinalFields = (note: Partial<Note>) => {
@@ -291,14 +214,6 @@ export default function App() {
     }
   };
 
-  const handleSignOut = async () => {
-    setStoredActiveClinicId(null);
-    await supabase.auth.signOut();
-    setView("dashboard");
-    setCurrentNote(null);
-    setSelectedPatient(null);
-  };
-
   const handleClinicChange = (clinicId: string) => {
     if (!clinicId || clinicId === activeMembership?.clinic_id) return;
     setStoredActiveClinicId(clinicId);
@@ -317,11 +232,7 @@ export default function App() {
     return (
       <Auth
         initialMode={forcePasswordReset ? "update" : "signin"}
-        onPasswordUpdated={() => {
-          setForcePasswordReset(false);
-          if (typeof window === "undefined") return;
-          window.history.replaceState({}, document.title, window.location.pathname);
-        }}
+        onPasswordUpdated={clearPasswordRecovery}
       />
     );
   }
@@ -368,7 +279,7 @@ export default function App() {
       toast={toast}
       activeView={view}
       onViewChange={setView}
-      onSignOut={handleSignOut}
+      onSignOut={signOut}
       userName={userName}
       userEmail={userEmail}
       role={userRole}
@@ -405,8 +316,8 @@ export default function App() {
         onQuickNote={handleQuickNote}
         onSaveNote={handleSaveNote}
         onDeleteNote={handleDeleteNote}
-        onSignOut={handleSignOut}
-        onSessionRefresh={refreshSession}
+        onSignOut={signOut}
+        onSessionRefresh={refreshWorkspaceSession}
         onNotesChanged={fetchNotes}
       />
     </ClinicWorkspaceShell>
