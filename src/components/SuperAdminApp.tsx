@@ -1,230 +1,32 @@
-
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { Session } from "@supabase/supabase-js";
-import {
-  AlertTriangle,
-  BookOpenText,
-  Building2,
-  CirclePlus,
-  History,
-  Loader2,
-  LogOut,
-  RefreshCcw,
-  Save,
-  Search,
-  ShieldCheck,
-} from "lucide-react";
+import { AlertTriangle, Loader2, LogOut, RefreshCcw } from "lucide-react";
 import { Auth } from "./Auth";
 import { Brand } from "./Brand";
 import { Toast } from "./Toast";
+import { ClinicListPanel } from "./superadmin/ClinicListPanel";
+import { ClinicWorkspace } from "./superadmin/ClinicWorkspace";
+import { CreateClinicPanel } from "./superadmin/CreateClinicPanel";
+import { OverviewCards } from "./superadmin/OverviewCards";
+import {
+  ClinicItem,
+  ClinicsPayload,
+  CreateClinicFlash,
+  CreateClinicFormState,
+  CreateClinicResponse,
+  FeatureFlag,
+  FeaturePayload,
+  OverviewPayload,
+  SuperadminMe,
+  SubscriptionFormState,
+  AuditPayload,
+  defaultCreateClinicFeatures,
+  emptyCreateClinicForm,
+  emptySubscriptionForm,
+  toDateInput,
+} from "./superadmin/types";
 import { AUTH_EXPIRED_EVENT, ApiError, apiRequest } from "../lib/api";
 import { supabase } from "../lib/supabaseClient";
-import { Switch } from "./Switch";
-
-type TenantStatus = "trialing" | "active" | "past_due" | "suspended" | "cancelled";
-type BillingProvider = "manual" | "asaas";
-
-type SuperadminMe = {
-  user_id: string;
-  email: string | null;
-  full_name: string | null;
-  active: boolean;
-  allowed_hosts: string[];
-};
-
-type OverviewPayload = {
-  totals: {
-    clinics_total: number;
-    active: number;
-    trialing: number;
-    past_due: number;
-    suspended: number;
-    cancelled: number;
-    blocked: number;
-    members_total: number;
-  };
-  recent_clinics: Array<{
-    id: string;
-    name: string;
-    created_at: string;
-    status: TenantStatus;
-  }>;
-};
-
-type ClinicItem = {
-  id: string;
-  name: string;
-  created_at: string;
-  owner_user_id: string;
-  owner_email: string | null;
-  owner_full_name: string | null;
-  subscription: {
-    clinic_id: string;
-    plan_code: string | null;
-    status: TenantStatus;
-    billing_provider: BillingProvider;
-    asaas_customer_id: string | null;
-    asaas_subscription_id: string | null;
-    trial_ends_at: string | null;
-    current_period_start: string | null;
-    current_period_end: string | null;
-    payment_grace_until: string | null;
-    next_charge_at: string | null;
-    blocked_at: string | null;
-    suspended_reason: string | null;
-    updated_at: string | null;
-  };
-  members: {
-    active_members: number;
-    roles: {
-      admin: number;
-      professional: number;
-      secretary: number;
-    };
-  };
-  features: {
-    enabled_count: number;
-    total_count: number;
-  };
-};
-
-type ClinicsPayload = {
-  clinics: ClinicItem[];
-};
-
-type FeatureFlag = {
-  clinic_id: string;
-  feature_key: string;
-  enabled: boolean;
-  config: Record<string, unknown>;
-  updated_at: string | null;
-};
-
-type FeaturePayload = {
-  features: FeatureFlag[];
-};
-
-type AuditLog = {
-  id: number;
-  actor_user_id: string | null;
-  actor_type: "superadmin" | "system";
-  action: string;
-  target_type: string;
-  target_id: string | null;
-  clinic_id: string | null;
-  metadata: Record<string, unknown>;
-  created_at: string;
-};
-
-type AuditPayload = {
-  logs: AuditLog[];
-};
-
-type SubscriptionFormState = {
-  plan_code: string;
-  status: TenantStatus;
-  billing_provider: BillingProvider;
-  asaas_customer_id: string;
-  asaas_subscription_id: string;
-  trial_ends_at: string;
-  current_period_start: string;
-  current_period_end: string;
-  payment_grace_until: string;
-  next_charge_at: string;
-  suspended_reason: string;
-};
-
-type CreateClinicFormState = {
-  name: string;
-  owner_email: string;
-  owner_full_name: string;
-  owner_password: string;
-  plan_code: string;
-  status: TenantStatus;
-  billing_provider: BillingProvider;
-};
-
-type CreateClinicResponse = {
-  clinic: {
-    id: string;
-    name: string;
-    owner_user_id: string;
-    created_at: string;
-  };
-  owner: {
-    user_id: string;
-    email: string | null;
-    full_name: string | null;
-    created: boolean;
-    temporary_password: string | null;
-  };
-  subscription: ClinicItem["subscription"];
-};
-
-type CreateClinicFlash = {
-  clinic_name: string;
-  owner_email: string | null;
-  owner_created: boolean;
-  temporary_password: string | null;
-};
-
-const statusLabels: Record<TenantStatus, string> = {
-  trialing: "Teste",
-  active: "Ativa",
-  past_due: "Em atraso",
-  suspended: "Suspensa",
-  cancelled: "Cancelada",
-};
-
-const featureLabels: Record<string, string> = {
-  "billing.asaas": "Asaas habilitado",
-  "messaging.evolution": "Evolution API",
-  "messaging.inbox": "Caixa de mensagens",
-  "crm.kanban": "Kanban CRM",
-  "crm.pipeline_automation": "Automacoes por labels",
-  "ai.assistant": "Assistente IA",
-};
-const defaultCreateClinicFeatures = Object.keys(featureLabels);
-
-function toDateInput(value: string | null | undefined) {
-  if (!value) return "";
-  return String(value).slice(0, 10);
-}
-
-function toLocalDateTime(value: string | null | undefined) {
-  if (!value) return "-";
-  const parsed = new Date(value);
-  if (Number.isNaN(parsed.getTime())) return "-";
-  return parsed.toLocaleString("pt-BR");
-}
-
-function emptySubscriptionForm(): SubscriptionFormState {
-  return {
-    plan_code: "starter",
-    status: "active",
-    billing_provider: "manual",
-    asaas_customer_id: "",
-    asaas_subscription_id: "",
-    trial_ends_at: "",
-    current_period_start: "",
-    current_period_end: "",
-    payment_grace_until: "",
-    next_charge_at: "",
-    suspended_reason: "",
-  };
-}
-
-function emptyCreateClinicForm(): CreateClinicFormState {
-  return {
-    name: "",
-    owner_email: "",
-    owner_full_name: "",
-    owner_password: "",
-    plan_code: "starter",
-    status: "active",
-    billing_provider: "manual",
-  };
-}
 
 export const SuperAdminApp = () => {
   const [session, setSession] = useState<Session | null>(null);
@@ -233,7 +35,7 @@ export const SuperAdminApp = () => {
   const [overview, setOverview] = useState<OverviewPayload | null>(null);
   const [clinics, setClinics] = useState<ClinicItem[]>([]);
   const [features, setFeatures] = useState<FeatureFlag[]>([]);
-  const [auditLogs, setAuditLogs] = useState<AuditLog[]>([]);
+  const [auditLogs, setAuditLogs] = useState<AuditPayload["logs"]>([]);
   const [query, setQuery] = useState("");
   const [selectedClinicId, setSelectedClinicId] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
@@ -253,9 +55,9 @@ export const SuperAdminApp = () => {
   const [createClinicForm, setCreateClinicForm] = useState<CreateClinicFormState>(
     emptyCreateClinicForm()
   );
-  const [createClinicFeatures, setCreateClinicFeatures] = useState<string[]>(
-    [...defaultCreateClinicFeatures]
-  );
+  const [createClinicFeatures, setCreateClinicFeatures] = useState<string[]>([
+    ...defaultCreateClinicFeatures,
+  ]);
   const authExpireInFlightRef = useRef(false);
 
   const accessToken = session?.access_token || "";
@@ -264,10 +66,11 @@ export const SuperAdminApp = () => {
     () => clinics.find((clinic) => clinic.id === selectedClinicId) || null,
     [clinics, selectedClinicId]
   );
+
   useEffect(() => {
     let mounted = true;
 
-    supabase.auth.getSession().then(({ data }) => {
+    void supabase.auth.getSession().then(({ data }) => {
       if (!mounted) return;
       setSession(data.session);
       setAuthReady(true);
@@ -345,7 +148,10 @@ export const SuperAdminApp = () => {
     if (!clinicId) return;
     setLoadingFeatures(true);
     try {
-      const data = await apiRequest<FeaturePayload>(`/api/superadmin/clinics/${clinicId}/features`, token);
+      const data = await apiRequest<FeaturePayload>(
+        `/api/superadmin/clinics/${clinicId}/features`,
+        token
+      );
       setFeatures(data.features || []);
     } catch (error) {
       console.error("Failed to load features", error);
@@ -395,7 +201,7 @@ export const SuperAdminApp = () => {
       }
     };
 
-    bootstrap();
+    void bootstrap();
   }, [session?.access_token]);
 
   useEffect(() => {
@@ -423,7 +229,7 @@ export const SuperAdminApp = () => {
       setFeatures([]);
       return;
     }
-    loadFeatures(accessToken, selectedClinicId);
+    void loadFeatures(accessToken, selectedClinicId);
   }, [selectedClinicId, accessToken]);
 
   const handleRefreshAll = async () => {
@@ -540,6 +346,14 @@ export const SuperAdminApp = () => {
       }
       return [...current, featureKey];
     });
+  };
+
+  const handleSelectAllCreateClinicFeatures = () => {
+    setCreateClinicFeatures([...defaultCreateClinicFeatures]);
+  };
+
+  const handleClearCreateClinicFeatures = () => {
+    setCreateClinicFeatures([]);
   };
 
   const handleCreateClinic = async (event: React.FormEvent) => {
@@ -686,600 +500,61 @@ export const SuperAdminApp = () => {
         </div>
       </header>
 
-      <main className="max-w-[1600px] mx-auto p-6 grid grid-cols-1 xl:grid-cols-[360px_1fr] gap-6">
-        <section className="space-y-6">
-          <form onSubmit={handleCreateClinic} className="glass-panel p-5 h-fit space-y-4">
-            <div className="flex items-center gap-2 text-petroleum font-bold uppercase text-xs tracking-wider">
-              <CirclePlus size={16} /> Cadastrar empresa
-            </div>
-            <label className="text-sm space-y-1 block">
-              <span className="text-slate-600">Nome da empresa/clinica</span>
-              <input
-                value={createClinicForm.name}
-                onChange={(event) =>
-                  setCreateClinicForm((prev) => ({ ...prev, name: event.target.value }))
-                }
-                className="apple-input w-full"
-                placeholder="Ex.: Clinica SmartPSI Centro"
-              />
-            </label>
-            <label className="text-sm space-y-1 block">
-              <span className="text-slate-600">Email do responsavel (conta principal)</span>
-              <input
-                type="email"
-                value={createClinicForm.owner_email}
-                onChange={(event) =>
-                  setCreateClinicForm((prev) => ({ ...prev, owner_email: event.target.value }))
-                }
-                className="apple-input w-full"
-                placeholder="responsavel@empresa.com"
-              />
-            </label>
-            <label className="text-sm space-y-1 block">
-              <span className="text-slate-600">Nome completo do responsavel (opcional)</span>
-              <input
-                value={createClinicForm.owner_full_name}
-                onChange={(event) =>
-                  setCreateClinicForm((prev) => ({ ...prev, owner_full_name: event.target.value }))
-                }
-                className="apple-input w-full"
-                placeholder="Nome do admin da empresa"
-              />
-            </label>
-            <label className="text-sm space-y-1 block">
-              <span className="text-slate-600">Senha inicial (opcional)</span>
-              <input
-                value={createClinicForm.owner_password}
-                onChange={(event) =>
-                  setCreateClinicForm((prev) => ({ ...prev, owner_password: event.target.value }))
-                }
-                className="apple-input w-full"
-                placeholder="Deixe vazio para gerar automatica"
-              />
-            </label>
-            <div className="grid grid-cols-1 gap-3">
-              <label className="text-sm space-y-1">
-                <span className="text-slate-600">Plano inicial</span>
-                <input
-                  value={createClinicForm.plan_code}
-                  onChange={(event) =>
-                    setCreateClinicForm((prev) => ({ ...prev, plan_code: event.target.value }))
-                  }
-                  className="apple-input w-full"
-                />
-              </label>
-              <div className="grid grid-cols-2 gap-3">
-                <label className="text-sm space-y-1">
-                  <span className="text-slate-600">Status</span>
-                  <select
-                    value={createClinicForm.status}
-                    onChange={(event) =>
-                      setCreateClinicForm((prev) => ({
-                        ...prev,
-                        status: event.target.value as TenantStatus,
-                      }))
-                    }
-                    className="apple-input w-full"
-                  >
-                    <option value="trialing">Teste</option>
-                    <option value="active">Ativa</option>
-                    <option value="past_due">Em atraso</option>
-                    <option value="suspended">Suspensa</option>
-                    <option value="cancelled">Cancelada</option>
-                  </select>
-                </label>
-                <label className="text-sm space-y-1">
-                  <span className="text-slate-600">Cobranca</span>
-                  <select
-                    value={createClinicForm.billing_provider}
-                    onChange={(event) =>
-                      setCreateClinicForm((prev) => ({
-                        ...prev,
-                        billing_provider: event.target.value as BillingProvider,
-                      }))
-                    }
-                    className="apple-input w-full"
-                  >
-                    <option value="manual">Manual</option>
-                    <option value="asaas">Asaas</option>
-                  </select>
-                </label>
-              </div>
-            </div>
-
-            <div className="space-y-2">
-              <div className="flex items-center justify-between gap-2 text-xs uppercase tracking-wider text-slate-500">
-                <span>Flags iniciais</span>
-                <div className="flex items-center gap-2">
-                  <button
-                    type="button"
-                    onClick={() => setCreateClinicFeatures([...defaultCreateClinicFeatures])}
-                    className="text-petroleum font-semibold"
-                  >
-                    Marcar todas
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setCreateClinicFeatures([])}
-                    className="text-slate-500 font-semibold"
-                  >
-                    Limpar
-                  </button>
-                </div>
-              </div>
-              <div className="space-y-1.5">
-                {defaultCreateClinicFeatures.map((featureKey) => {
-                  const checked = createClinicFeatures.includes(featureKey);
-                  return (
-                    <label key={featureKey} className="flex items-center gap-3 text-sm text-slate-700 cursor-pointer">
-                      <Switch
-                        checked={checked}
-                        onChange={() => toggleCreateClinicFeature(featureKey)}
-                      />
-                      <span>{featureLabels[featureKey] || featureKey}</span>
-                    </label>
-                  );
-                })}
-              </div>
-            </div>
-
-            <button
-              type="submit"
-              disabled={creatingClinic}
-              className="w-full bg-petroleum text-white px-4 py-2.5 rounded-xl font-semibold text-sm disabled:opacity-60"
-            >
-              {creatingClinic ? "Cadastrando..." : "Cadastrar empresa"}
-            </button>
-
-            {createClinicFlash && (
-              <div className="rounded-xl border border-success/30 bg-success/10 px-3 py-2 text-sm text-slate-700 space-y-1">
-                <p className="font-semibold text-success">
-                  Empresa criada: {createClinicFlash.clinic_name}
-                </p>
-                <p>
-                  Responsavel: {createClinicFlash.owner_email || "email nao informado"} |{" "}
-                  {createClinicFlash.owner_created ? "usuario criado agora" : "usuario existente"}
-                </p>
-                {createClinicFlash.temporary_password && (
-                  <p className="font-mono text-xs break-all">
-                    Senha temporaria: {createClinicFlash.temporary_password}
-                  </p>
-                )}
-              </div>
-            )}
-          </form>
-
-          <div className="glass-panel p-5 h-fit space-y-4">
-            <div className="flex items-center gap-2 text-petroleum font-bold uppercase text-xs tracking-wider">
-              <Building2 size={16} /> Clinicas
-            </div>
-            <div className="relative">
-              <Search size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
-              <input
-                value={query}
-                onChange={(event) => setQuery(event.target.value)}
-                onKeyDown={(event) => {
-                  if (event.key === "Enter") {
-                    event.preventDefault();
-                    loadClinics();
-                  }
-                }}
-                placeholder="Buscar por clinica ou responsavel"
-                className="apple-input w-full pl-10"
-              />
-            </div>
-
-            <button
-              onClick={() => loadClinics()}
-              className="w-full border border-petroleum/30 text-petroleum px-4 py-2.5 rounded-xl font-semibold text-sm"
-            >
-              Aplicar filtro
-            </button>
-
-            <div className="space-y-2 max-h-[50vh] overflow-auto pr-1">
-              {clinics.length === 0 ? (
-                <div className="text-sm text-slate-500 py-6 text-center">Nenhuma clinica encontrada.</div>
-              ) : (
-                clinics.map((clinic) => (
-                  <button
-                    key={clinic.id}
-                    onClick={() => setSelectedClinicId(clinic.id)}
-                    className={`w-full text-left rounded-2xl border p-3 transition-all ${selectedClinicId === clinic.id
-                      ? "border-petroleum bg-petroleum/10"
-                      : "border-slate-200 hover:border-petroleum/40 hover:bg-white"
-                      }`}
-                  >
-                    <div className="flex items-start justify-between gap-2">
-                      <p className="font-semibold text-sm text-[#1A1A1A] line-clamp-1">{clinic.name}</p>
-                      <span
-                        className={`text-[11px] px-2 py-0.5 rounded-full font-semibold ${clinic.subscription.status === "active"
-                          ? "bg-success/15 text-success"
-                          : clinic.subscription.status === "trialing"
-                            ? "bg-warning/15 text-warning"
-                            : clinic.subscription.status === "past_due"
-                              ? "bg-warning/20 text-[#9a6b00]"
-                              : "bg-error/15 text-error"
-                          }`}
-                      >
-                        {statusLabels[clinic.subscription.status]}
-                      </span>
-                    </div>
-                    <p className="text-xs text-slate-500 mt-1 line-clamp-1">
-                      {clinic.owner_full_name || clinic.owner_email || clinic.owner_user_id}
-                    </p>
-                    <div className="mt-2 text-xs text-slate-500 flex items-center justify-between">
-                      <span>{clinic.members.active_members} membros</span>
-                      <span>{clinic.features.enabled_count} flags ativas</span>
-                    </div>
-                  </button>
-                ))
-              )}
+      <main className="max-w-[1600px] mx-auto p-6 space-y-6">
+        {portalError && me ? (
+          <div className="glass-panel p-4 border border-warning/30 bg-warning/10">
+            <div className="flex items-center gap-2 text-[#8a5d00] font-semibold">
+              <AlertTriangle size={16} /> {portalError}
             </div>
           </div>
-        </section>
+        ) : null}
 
-        <section className="space-y-6">
-          <div className="grid grid-cols-2 md:grid-cols-4 xl:grid-cols-8 gap-3">
-            {[
-              ["Clinicas", overview?.totals.clinics_total || 0],
-              ["Ativas", overview?.totals.active || 0],
-              ["Teste", overview?.totals.trialing || 0],
-              ["Atraso", overview?.totals.past_due || 0],
-              ["Suspensas", overview?.totals.suspended || 0],
-              ["Canceladas", overview?.totals.cancelled || 0],
-              ["Bloqueadas", overview?.totals.blocked || 0],
-              ["Membros", overview?.totals.members_total || 0],
-            ].map(([label, value]) => (
-              <div key={String(label)} className="glass-card p-4">
-                <p className="text-xs uppercase tracking-wider text-slate-500">{label}</p>
-                <p className="text-2xl font-bold text-[#1A1A1A] mt-2">{String(value)}</p>
-              </div>
-            ))}
-          </div>
+        <OverviewCards overview={overview} />
 
-          {!selectedClinic ? (
-            <div className="glass-panel p-8 text-slate-500">Selecione uma clinica para iniciar a gestao.</div>
-          ) : (
-            <div className="grid grid-cols-1 2xl:grid-cols-[1.15fr_0.85fr] gap-6">
-              <article className="glass-panel p-6 space-y-5">
-                <div className="flex items-center justify-between gap-3">
-                  <div>
-                    <h2 className="text-2xl font-bold text-[#1A1A1A]">{selectedClinic.name}</h2>
-                    <p className="text-sm text-slate-500 mt-1">
-                      Criada em {toLocalDateTime(selectedClinic.created_at)} | Responsavel:{" "}
-                      {selectedClinic.owner_email || selectedClinic.owner_user_id}
-                    </p>
-                  </div>
-                  <div className="text-right text-sm">
-                    <p className="font-semibold text-[#1A1A1A]">Membros ativos: {selectedClinic.members.active_members}</p>
-                    <p className="text-slate-500">
-                      Admin {selectedClinic.members.roles.admin} | Profissionais{" "}
-                      {selectedClinic.members.roles.professional} | Secretaria{" "}
-                      {selectedClinic.members.roles.secretary}
-                    </p>
-                  </div>
-                </div>
+        <div className="grid grid-cols-1 xl:grid-cols-[360px_1fr] gap-6">
+          <section className="space-y-6">
+            <CreateClinicPanel
+              form={createClinicForm}
+              selectedFeatures={createClinicFeatures}
+              creatingClinic={creatingClinic}
+              flash={createClinicFlash}
+              onFormChange={setCreateClinicForm}
+              onToggleFeature={toggleCreateClinicFeature}
+              onSelectAllFeatures={handleSelectAllCreateClinicFeatures}
+              onClearFeatures={handleClearCreateClinicFeatures}
+              onSubmit={handleCreateClinic}
+            />
 
-                <form onSubmit={handleSaveSubscription} className="space-y-4">
-                  <div className="flex items-center gap-2 text-petroleum font-bold uppercase text-xs tracking-wider">
-                    <ShieldCheck size={16} /> Assinatura e bloqueio
-                  </div>
+            <ClinicListPanel
+              clinics={clinics}
+              query={query}
+              selectedClinicId={selectedClinicId}
+              onQueryChange={setQuery}
+              onApplyFilter={() => {
+                void loadClinics();
+              }}
+              onSelectClinic={setSelectedClinicId}
+            />
+          </section>
 
-                  <div className="grid md:grid-cols-3 gap-4">
-                    <label className="text-sm space-y-1">
-                      <span className="text-slate-600">Plano</span>
-                      <input
-                        value={subscriptionForm.plan_code}
-                        onChange={(event) =>
-                          setSubscriptionForm((prev) => ({ ...prev, plan_code: event.target.value }))
-                        }
-                        className="apple-input w-full"
-                      />
-                    </label>
-
-                    <label className="text-sm space-y-1">
-                      <span className="text-slate-600">Status</span>
-                      <select
-                        value={subscriptionForm.status}
-                        onChange={(event) =>
-                          setSubscriptionForm((prev) => ({
-                            ...prev,
-                            status: event.target.value as TenantStatus,
-                          }))
-                        }
-                        className="apple-input w-full"
-                      >
-                        <option value="trialing">Teste</option>
-                        <option value="active">Ativa</option>
-                        <option value="past_due">Em atraso</option>
-                        <option value="suspended">Suspensa</option>
-                        <option value="cancelled">Cancelada</option>
-                      </select>
-                    </label>
-
-                    <label className="text-sm space-y-1">
-                      <span className="text-slate-600">Provedor</span>
-                      <select
-                        value={subscriptionForm.billing_provider}
-                        onChange={(event) =>
-                          setSubscriptionForm((prev) => ({
-                            ...prev,
-                            billing_provider: event.target.value as BillingProvider,
-                          }))
-                        }
-                        className="apple-input w-full"
-                      >
-                        <option value="manual">Manual</option>
-                        <option value="asaas">Asaas</option>
-                      </select>
-                    </label>
-                  </div>
-
-                  <div className="grid md:grid-cols-2 gap-4">
-                    <label className="text-sm space-y-1">
-                      <span className="text-slate-600">Asaas customer id</span>
-                      <input
-                        value={subscriptionForm.asaas_customer_id}
-                        onChange={(event) =>
-                          setSubscriptionForm((prev) => ({
-                            ...prev,
-                            asaas_customer_id: event.target.value,
-                          }))
-                        }
-                        className="apple-input w-full"
-                      />
-                    </label>
-                    <label className="text-sm space-y-1">
-                      <span className="text-slate-600">Asaas subscription id</span>
-                      <input
-                        value={subscriptionForm.asaas_subscription_id}
-                        onChange={(event) =>
-                          setSubscriptionForm((prev) => ({
-                            ...prev,
-                            asaas_subscription_id: event.target.value,
-                          }))
-                        }
-                        className="apple-input w-full"
-                      />
-                    </label>
-                  </div>
-                  <div className="grid md:grid-cols-4 gap-4">
-                    <label className="text-sm space-y-1">
-                      <span className="text-slate-600">Fim de teste</span>
-                      <input
-                        type="date"
-                        value={subscriptionForm.trial_ends_at}
-                        onChange={(event) =>
-                          setSubscriptionForm((prev) => ({ ...prev, trial_ends_at: event.target.value }))
-                        }
-                        className="apple-input w-full"
-                      />
-                    </label>
-                    <label className="text-sm space-y-1">
-                      <span className="text-slate-600">Periodo inicio</span>
-                      <input
-                        type="date"
-                        value={subscriptionForm.current_period_start}
-                        onChange={(event) =>
-                          setSubscriptionForm((prev) => ({
-                            ...prev,
-                            current_period_start: event.target.value,
-                          }))
-                        }
-                        className="apple-input w-full"
-                      />
-                    </label>
-                    <label className="text-sm space-y-1">
-                      <span className="text-slate-600">Periodo fim</span>
-                      <input
-                        type="date"
-                        value={subscriptionForm.current_period_end}
-                        onChange={(event) =>
-                          setSubscriptionForm((prev) => ({
-                            ...prev,
-                            current_period_end: event.target.value,
-                          }))
-                        }
-                        className="apple-input w-full"
-                      />
-                    </label>
-                    <label className="text-sm space-y-1">
-                      <span className="text-slate-600">Carência de pagamento</span>
-                      <input
-                        type="date"
-                        value={subscriptionForm.payment_grace_until}
-                        onChange={(event) =>
-                          setSubscriptionForm((prev) => ({
-                            ...prev,
-                            payment_grace_until: event.target.value,
-                          }))
-                        }
-                        className="apple-input w-full"
-                      />
-                    </label>
-                  </div>
-
-                  <div className="grid md:grid-cols-[1fr_auto] gap-4 items-end">
-                    <label className="text-sm space-y-1">
-                      <span className="text-slate-600">Próxima cobrança</span>
-                      <input
-                        type="date"
-                        value={subscriptionForm.next_charge_at}
-                        onChange={(event) =>
-                          setSubscriptionForm((prev) => ({
-                            ...prev,
-                            next_charge_at: event.target.value,
-                          }))
-                        }
-                        className="apple-input w-full"
-                      />
-                    </label>
-
-                    <div className="flex items-center gap-2">
-                      <button
-                        type="button"
-                        onClick={handleSyncAsaasSubscription}
-                        disabled={syncingAsaas}
-                        className="border border-petroleum/30 text-petroleum px-4 py-3 rounded-xl font-semibold disabled:opacity-60"
-                      >
-                        {syncingAsaas ? "Sincronizando..." : "Sincronizar Asaas"}
-                      </button>
-                      <button
-                        type="submit"
-                        disabled={savingSubscription}
-                        className="bg-petroleum text-white px-5 py-3 rounded-xl font-semibold disabled:opacity-60 flex items-center gap-2"
-                      >
-                        <Save size={16} /> {savingSubscription ? "Salvando..." : "Salvar assinatura"}
-                      </button>
-                    </div>
-                  </div>
-
-                  <label className="text-sm space-y-1 block">
-                    <span className="text-slate-600">Motivo de suspensao</span>
-                    <textarea
-                      value={subscriptionForm.suspended_reason}
-                      onChange={(event) =>
-                        setSubscriptionForm((prev) => ({
-                          ...prev,
-                          suspended_reason: event.target.value,
-                        }))
-                      }
-                      rows={3}
-                      className="apple-input w-full resize-y"
-                    />
-                  </label>
-                </form>
-
-                <div className="border-t border-[#3A3A3C]/10 pt-5">
-                  <div className="flex items-center gap-2 text-petroleum font-bold uppercase text-xs tracking-wider mb-3">
-                    <ShieldCheck size={16} /> Flags de recurso
-                  </div>
-
-                  {loadingFeatures ? (
-                    <div className="text-sm text-slate-500 flex items-center gap-2">
-                      <Loader2 size={16} className="animate-spin" /> Carregando flags...
-                    </div>
-                  ) : features.length === 0 ? (
-                    <div className="text-sm text-slate-500">Nenhuma flag cadastrada para esta clinica.</div>
-                  ) : (
-                    <div className="space-y-2">
-                      {features.map((feature) => (
-                        <label
-                          key={feature.feature_key}
-                          className="flex items-center justify-between gap-3 border border-slate-200 rounded-xl px-3 py-2"
-                        >
-                          <div>
-                            <p className="font-semibold text-sm text-[#1A1A1A]">
-                              {featureLabels[feature.feature_key] || feature.feature_key}
-                            </p>
-                            <p className="text-xs text-slate-500">{feature.feature_key}</p>
-                          </div>
-                          <div className="flex items-center gap-3">
-                            <span
-                              className={`text-xs font-semibold ${feature.enabled ? "text-success" : "text-slate-500"
-                                }`}
-                            >
-                              {feature.enabled ? "Ativo" : "Inativo"}
-                            </span>
-                            <button
-                              type="button"
-                              disabled={savingFeatureKey === feature.feature_key}
-                              onClick={() => handleToggleFeature(feature.feature_key, !feature.enabled)}
-                              className={`w-11 h-6 rounded-full transition relative ${feature.enabled ? "bg-success/80" : "bg-slate-300"
-                                } ${savingFeatureKey === feature.feature_key ? "opacity-60" : ""}`}
-                            >
-                              <span
-                                className={`absolute top-0.5 h-5 w-5 rounded-full bg-white shadow transition ${feature.enabled ? "left-5" : "left-0.5"
-                                  }`}
-                              />
-                            </button>
-                          </div>
-                        </label>
-                      ))}
-                    </div>
-                  )}
-                </div>
-              </article>
-
-              <aside className="space-y-6">
-                <div className="glass-panel p-5 space-y-3">
-                  <div className="flex items-center gap-2 text-petroleum font-bold uppercase text-xs tracking-wider">
-                    <History size={16} /> Auditoria recente
-                  </div>
-
-                  <div className="space-y-2 max-h-[380px] overflow-auto pr-1">
-                    {auditLogs.length === 0 ? (
-                      <p className="text-sm text-slate-500">Sem eventos de auditoria.</p>
-                    ) : (
-                      auditLogs.map((log) => (
-                        <div key={log.id} className="border border-slate-200 rounded-xl p-3 text-sm">
-                          <p className="font-semibold text-[#1A1A1A]">{log.action}</p>
-                          <p className="text-xs text-slate-500 mt-1">
-                            {toLocalDateTime(log.created_at)} | {log.actor_type}
-                          </p>
-                          <p className="text-xs text-slate-500 mt-1 break-all">
-                            alvo: {log.target_type} {log.target_id || "-"}
-                          </p>
-                        </div>
-                      ))
-                    )}
-                  </div>
-                </div>
-
-                <div className="glass-panel p-5 space-y-3">
-                  <div className="flex items-center gap-2 text-petroleum font-bold uppercase text-xs tracking-wider">
-                    <BookOpenText size={16} /> Ajuda de configuracao
-                  </div>
-                  <div className="space-y-3 text-sm text-slate-700">
-                    <div className="rounded-xl border border-slate-200 p-3">
-                      <p className="font-semibold text-[#1A1A1A]">Dados da empresa e responsavel</p>
-                      <p className="text-slate-600 mt-1">
-                        Nome da empresa/clinica + email do responsavel. Se o email nao existir no
-                        Auth, o sistema cria automaticamente e retorna senha temporaria.
-                      </p>
-                    </div>
-                    <div className="rounded-xl border border-slate-200 p-3">
-                      <p className="font-semibold text-[#1A1A1A]">
-                        Asaas (quando usar cobranca automatica)
-                      </p>
-                      <p className="text-slate-600 mt-1">
-                        Pegue no Asaas os campos `customer id` e `subscription id` em Clientes e
-                        Assinaturas. Depois salve em "Assinatura e bloqueio".
-                      </p>
-                    </div>
-                    <div className="rounded-xl border border-slate-200 p-3">
-                      <p className="font-semibold text-[#1A1A1A]">Evolution API / Mensageria</p>
-                      <p className="text-slate-600 mt-1">
-                        Necessario `api_base_url`, `instance_name`, `api_token` e
-                        `webhook_secret` da instancia Evolution para habilitar inbox e automacoes
-                        por labels.
-                      </p>
-                    </div>
-                    <div className="rounded-xl border border-slate-200 p-3">
-                      <p className="font-semibold text-[#1A1A1A]">Dominios e auth</p>
-                      <p className="text-slate-600 mt-1">
-                        Confirme DNS e SSL do dominio cliente e mantenha o dominio de superadmin
-                        exclusivo da plataforma.
-                      </p>
-                    </div>
-                  </div>
-                </div>
-
-                <div className="glass-panel p-5 space-y-3">
-                  <p className="text-xs font-bold uppercase tracking-wider text-petroleum">Checklist proximo modulo</p>
-                  <ul className="text-sm text-slate-600 space-y-2 list-disc pl-5">
-                    <li>Asaas multi-tenant: sincronizar status por webhook.</li>
-                    <li>Evolution + inbox: threads, mensagens e atribuicoes.</li>
-                    <li>Kanban CRM: pipeline customizavel drag-and-drop.</li>
-                    <li>Automacoes por labels e regras de funil.</li>
-                  </ul>
-                </div>
-              </aside>
-            </div>
-          )}
-        </section>
+          <section className="space-y-6">
+            <ClinicWorkspace
+              selectedClinic={selectedClinic}
+              subscriptionForm={subscriptionForm}
+              features={features}
+              auditLogs={auditLogs}
+              loadingFeatures={loadingFeatures}
+              savingSubscription={savingSubscription}
+              syncingAsaas={syncingAsaas}
+              savingFeatureKey={savingFeatureKey}
+              onSubscriptionFormChange={setSubscriptionForm}
+              onSaveSubscription={handleSaveSubscription}
+              onSyncAsaasSubscription={handleSyncAsaasSubscription}
+              onToggleFeature={handleToggleFeature}
+            />
+          </section>
+        </div>
       </main>
     </div>
   );
 };
-
