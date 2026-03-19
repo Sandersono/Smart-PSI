@@ -26,6 +26,7 @@ import {
   toDateInput,
 } from "./superadmin/types";
 import { AUTH_EXPIRED_EVENT, ApiError, apiRequest } from "../lib/api";
+import { ADMIN_PATH_PREFIX, syncBrowserPath } from "../lib/workspaceRoutes";
 import { supabase } from "../lib/supabaseClient";
 
 export const SuperAdminApp = () => {
@@ -96,6 +97,10 @@ export const SuperAdminApp = () => {
     }, 3500);
     return () => window.clearTimeout(timeout);
   }, [toast]);
+
+  useEffect(() => {
+    syncBrowserPath(ADMIN_PATH_PREFIX, "replace");
+  }, []);
 
   useEffect(() => {
     const onAuthExpired = async () => {
@@ -479,6 +484,15 @@ export const SuperAdminApp = () => {
           </div>
 
           <div className="flex items-center gap-3">
+            <button
+              onClick={() => {
+                if (typeof window === "undefined") return;
+                window.location.assign("/app");
+              }}
+              className="border border-slate-300 text-slate-600 px-4 py-2 rounded-xl font-semibold text-sm"
+            >
+              Abrir app
+            </button>
             <button
               onClick={handleRefreshAll}
               disabled={loading}

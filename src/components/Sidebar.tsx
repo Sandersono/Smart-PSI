@@ -13,19 +13,29 @@ import {
 } from "lucide-react";
 import { cn } from "../lib/utils";
 import { Brand } from "./Brand";
+import { ClinicWorkspaceView } from "../lib/workspaceRoutes";
+import { UserRole } from "../lib/types";
 
 interface SidebarProps {
-  activeView: string;
-  onViewChange: (view: string) => void;
+  activeView: ClinicWorkspaceView;
+  onViewChange: (view: ClinicWorkspaceView) => void;
   onSignOut: () => void;
   userName: string;
   userEmail: string;
-  role: "admin" | "professional" | "secretary";
+  role: UserRole;
+  platformRole?: "superadmin" | null;
   activeClinicId?: string;
   activeClinicName?: string | null;
   clinicOptions?: Array<{ id: string; label: string }>;
   onClinicChange?: (clinicId: string) => void;
+  onOpenPlatform?: () => void;
 }
+
+type NavigationItem = {
+  id: ClinicWorkspaceView;
+  label: string;
+  icon: React.ComponentType<{ size?: number }>;
+};
 
 export const Sidebar = ({
   activeView,
@@ -34,17 +44,19 @@ export const Sidebar = ({
   userName,
   userEmail,
   role,
+  platformRole,
   activeClinicId,
   activeClinicName,
   clinicOptions = [],
   onClinicChange,
+  onOpenPlatform,
 }: SidebarProps) => {
-  const clinicalItems = [
+  const clinicalItems: NavigationItem[] = [
     { id: "dashboard", label: "Painel", icon: LayoutDashboard },
     { id: "record", label: "Nova Sessao", icon: Mic },
   ];
 
-  const operationalItems = [
+  const operationalItems: NavigationItem[] = [
     { id: "patients", label: "Pacientes", icon: Users },
     { id: "agenda", label: "Agenda", icon: CalendarDays },
     { id: "inbox", label: "Atendimento", icon: MessageCircle },
@@ -53,28 +65,59 @@ export const Sidebar = ({
     { id: "help", label: "Ajuda e LGPD", icon: HelpCircle },
   ];
 
-  const menuItems = role === "secretary" ? operationalItems : [...clinicalItems, ...operationalItems];
-
   return (
     <aside className="w-64 h-screen sticky top-0 bg-[linear-gradient(180deg,#141414_0%,#1A1A1A_45%,#222224_100%)] border-r border-[#3A3A3C] p-6 flex flex-col text-slate-100 shadow-[inset_-1px_0_0_rgba(255,255,255,0.04)]">
       <div className="mb-12 px-2">
         <Brand inverse />
       </div>
 
-      <nav className="flex-1 space-y-2">
-        {menuItems.map((item) => (
-          <button
-            key={item.id}
-            onClick={() => onViewChange(item.id)}
-            className={cn("nav-item w-full", activeView === item.id && "nav-item-active")}
-          >
-            <item.icon size={20} />
-            {item.label}
-          </button>
-        ))}
+      <nav className="flex-1 space-y-6">
+        {role !== "secretary" ? (
+          <div className="space-y-2">
+            <p className="px-2 text-[11px] uppercase tracking-[0.18em] text-slate-400">
+              Clinico
+            </p>
+            {clinicalItems.map((item) => (
+              <button
+                key={item.id}
+                onClick={() => onViewChange(item.id)}
+                className={cn("nav-item w-full", activeView === item.id && "nav-item-active")}
+              >
+                <item.icon size={20} />
+                {item.label}
+              </button>
+            ))}
+          </div>
+        ) : null}
+
+        <div className="space-y-2">
+          <p className="px-2 text-[11px] uppercase tracking-[0.18em] text-slate-400">
+            Operacao da clinica
+          </p>
+          {operationalItems.map((item) => (
+            <button
+              key={item.id}
+              onClick={() => onViewChange(item.id)}
+              className={cn("nav-item w-full", activeView === item.id && "nav-item-active")}
+            >
+              <item.icon size={20} />
+              {item.label}
+            </button>
+          ))}
+        </div>
       </nav>
 
       <div className="pt-6 border-t border-white/20 space-y-4">
+        {platformRole === "superadmin" && onOpenPlatform ? (
+          <button
+            onClick={onOpenPlatform}
+            className="nav-item w-full border border-white/10 bg-white/5 hover:bg-white/10"
+          >
+            <Settings size={20} />
+            Portal da plataforma
+          </button>
+        ) : null}
+
         <div className="px-2 space-y-2">
           <p className="text-[11px] uppercase tracking-[0.18em] text-slate-400">Clinica ativa</p>
           {clinicOptions.length > 1 && onClinicChange ? (

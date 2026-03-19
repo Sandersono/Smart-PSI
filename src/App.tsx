@@ -28,22 +28,20 @@ import {
 import { supabase } from "./lib/supabaseClient";
 import { Note } from "./lib/utils";
 import { Patient, SessionContext, UserRole } from "./lib/types";
+import {
+  ClinicWorkspaceView,
+  buildClinicWorkspacePath,
+  parseClinicWorkspaceView,
+  syncBrowserPath,
+} from "./lib/workspaceRoutes";
 
 type NoteSource = "audio" | "quick" | "manual";
 
 export default function App() {
-  const [view, setView] = useState<
-    | "dashboard"
-    | "record"
-    | "note"
-    | "settings"
-    | "help"
-    | "patients"
-    | "patient_profile"
-    | "agenda"
-    | "inbox"
-    | "financial"
-  >("dashboard");
+  const [view, setView] = useState<ClinicWorkspaceView>(() => {
+    if (typeof window === "undefined") return "dashboard";
+    return parseClinicWorkspaceView(window.location.pathname, "dashboard");
+  });
   const [session, setSession] = useState<Session | null>(null);
   const [authReady, setAuthReady] = useState(false);
   const [notes, setNotes] = useState<Note[]>([]);
@@ -150,6 +148,10 @@ export default function App() {
       setView("agenda");
     }
   }, [activeMembership?.role, view]);
+
+  useEffect(() => {
+    syncBrowserPath(buildClinicWorkspacePath(view), "replace");
+  }, [view]);
 
   const notify = (type: "success" | "error" | "info", message: string) => {
     setToast({ type, message });
@@ -371,25 +373,12 @@ export default function App() {
       {toast && <Toast type={toast.type} message={toast.message} />}
       <Sidebar
         activeView={view === "patient_profile" ? "patients" : view}
-        onViewChange={(nextView) =>
-          setView(
-            nextView as
-            | "dashboard"
-            | "record"
-            | "note"
-            | "settings"
-            | "help"
-            | "patients"
-            | "patient_profile"
-            | "agenda"
-            | "inbox"
-            | "financial"
-          )
-        }
+        onViewChange={setView}
         onSignOut={handleSignOut}
         userName={userName}
         userEmail={userEmail}
         role={userRole}
+        platformRole={sessionContext?.platform_role}
         activeClinicId={activeMembership?.clinic_id}
         activeClinicName={activeMembership?.clinic_name}
         clinicOptions={(sessionContext?.memberships || []).map((membership) => ({
@@ -397,6 +386,10 @@ export default function App() {
           label: membership.clinic_name || membership.clinic_slug || membership.clinic_id,
         }))}
         onClinicChange={handleClinicChange}
+        onOpenPlatform={() => {
+          if (typeof window === "undefined") return;
+          window.location.assign("/admin");
+        }}
       />
 
       <main className="flex-1 p-8 lg:p-12 overflow-y-auto">
