@@ -67,10 +67,46 @@ type AsaasSettingsPayload = {
   };
 };
 
+type IntegrationProbeStatus =
+  | "connected"
+  | "disconnected"
+  | "error"
+  | "not_configured"
+  | "disabled";
+
+type IntegrationProbeResult = {
+  status: IntegrationProbeStatus;
+  message?: string;
+  http_status?: number;
+  latency_ms?: number;
+};
+
+type IntegrationsTestPayload = {
+  tested_at: string;
+  asaas: IntegrationProbeResult;
+  google: IntegrationProbeResult;
+};
+
 function getErrorMessage(error: unknown, fallback: string) {
   if (error instanceof ApiError) return error.message || fallback;
   if (error instanceof Error) return error.message || fallback;
   return fallback;
+}
+
+function getIntegrationStatusLabel(status: IntegrationProbeStatus) {
+  if (status === "connected") return "Conectado";
+  if (status === "disconnected") return "Desconectado";
+  if (status === "not_configured") return "Nao configurado";
+  if (status === "disabled") return "Desativado";
+  return "Erro";
+}
+
+function getIntegrationStatusClass(status: IntegrationProbeStatus) {
+  if (status === "connected") return "bg-success/10 text-success";
+  if (status === "error") return "bg-error/10 text-error";
+  if (status === "disabled" || status === "not_configured")
+    return "bg-warning/10 text-warning";
+  return "bg-slate-700 text-white";
 }
 
 export const Settings = ({
@@ -112,11 +148,14 @@ export const Settings = ({
   const [defaultDueDays, setDefaultDueDays] = useState<number>(2);
   const [lateFeePercent, setLateFeePercent] = useState<number>(2);
   const [interestPercent, setInterestPercent] = useState<number>(1);
+  const [testingIntegrations, setTestingIntegrations] = useState(false);
+  const [integrationsProbe, setIntegrationsProbe] = useState<IntegrationsTestPayload | null>(null);
 
   const canAccessClinical = role !== "secretary";
   const canManageMembers = role === "admin";
   const canManageGoogle = role === "admin" || role === "professional";
   const canManageAsaas = role === "admin" || role === "professional";
+  const canTestIntegrations = canManageGoogle || canManageAsaas;
 
   useEffect(() => {
     setFullName(userName || "");
@@ -209,6 +248,24 @@ export const Settings = ({
       });
     } finally {
       setLoadingAsaasSettings(false);
+    }
+  };
+
+  const handleTestIntegrations = async () => {
+    if (!canTestIntegrations) return;
+    setTestingIntegrations(true);
+    try {
+      const data = await apiRequest<IntegrationsTestPayload>("/api/integrations/test", accessToken);
+      setIntegrationsProbe(data);
+      setFeedback({ type: "success", message: "Teste de integracoes executado." });
+    } catch (error) {
+      console.error("Failed to test integrations", error);
+      setFeedback({
+        type: "error",
+        message: getErrorMessage(error, "Falha ao testar conexoes de integracao."),
+      });
+    } finally {
+      setTestingIntegrations(false);
     }
   };
 
@@ -738,6 +795,90 @@ export const Settings = ({
               ))
             )}
           </div>
+        </div>
+      )}
+
+      {canTestIntegrations && (
+        <div className="glass-panel p-8 space-y-5">
+          <div className="flex items-center justify-between gap-3 flex-wrap">
+            <div>
+              <h3 className="font-bold text-petroleum uppercase tracking-wider text-sm">
+                Teste de conexoes
+              </h3>
+              <p className="text-sm text-slate-500">
+                Valida conectividade real com Asaas e Google Agenda.
+              </p>
+            </div>
+            <button
+              type="button"
+              onClick={handleTestIntegrations}
+              disabled={testingIntegrations}
+              className="bg-petroleum text-white px-5 py-2.5 rounded-xl font-semibold disabled:opacity-60 disabled:cursor-not-allowed"
+            >
+              {testingIntegrations ? "Testando..." : "Testar conexoes agora"}
+            </button>
+          </div>
+
+          {integrationsProbe && (
+            <>
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div className="rounded-xl border border-black/10 p-4 space-y-2 bg-white/50">
+                  <div className="flex items-center justify-between gap-3">
+                    <p className="font-semibold text-slate-700">Asaas</p>
+                    <span
+                      className={`text-xs font-bold px-3 py-1 rounded-full ${getIntegrationStatusClass(
+                        integrationsProbe.asaas.status
+                      )}`}
+                    >
+                      {getIntegrationStatusLabel(integrationsProbe.asaas.status)}
+                    </span>
+                  </div>
+                  <p className="text-sm text-slate-600">
+                    {integrationsProbe.asaas.message || "Sem detalhes adicionais."}
+                  </p>
+                  {(integrationsProbe.asaas.latency_ms || integrationsProbe.asaas.http_status) && (
+                    <p className="text-xs text-slate-500">
+                      {integrationsProbe.asaas.latency_ms
+                        ? `Latencia: ${integrationsProbe.asaas.latency_ms} ms`
+                        : ""}
+                      {integrationsProbe.asaas.http_status
+                        ? `${integrationsProbe.asaas.latency_ms ? " • " : ""}HTTP: ${integrationsProbe.asaas.http_status}`
+                        : ""}
+                    </p>
+                  )}
+                </div>
+
+                <div className="rounded-xl border border-black/10 p-4 space-y-2 bg-white/50">
+                  <div className="flex items-center justify-between gap-3">
+                    <p className="font-semibold text-slate-700">Google Agenda</p>
+                    <span
+                      className={`text-xs font-bold px-3 py-1 rounded-full ${getIntegrationStatusClass(
+                        integrationsProbe.google.status
+                      )}`}
+                    >
+                      {getIntegrationStatusLabel(integrationsProbe.google.status)}
+                    </span>
+                  </div>
+                  <p className="text-sm text-slate-600">
+                    {integrationsProbe.google.message || "Sem detalhes adicionais."}
+                  </p>
+                  {(integrationsProbe.google.latency_ms || integrationsProbe.google.http_status) && (
+                    <p className="text-xs text-slate-500">
+                      {integrationsProbe.google.latency_ms
+                        ? `Latencia: ${integrationsProbe.google.latency_ms} ms`
+                        : ""}
+                      {integrationsProbe.google.http_status
+                        ? `${integrationsProbe.google.latency_ms ? " • " : ""}HTTP: ${integrationsProbe.google.http_status}`
+                        : ""}
+                    </p>
+                  )}
+                </div>
+              </div>
+              <p className="text-xs text-slate-400">
+                Ultimo teste: {new Date(integrationsProbe.tested_at).toLocaleString("pt-BR")}
+              </p>
+            </>
+          )}
         </div>
       )}
 
